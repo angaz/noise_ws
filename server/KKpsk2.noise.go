@@ -20,10 +20,13 @@ package main
 import (
 	"crypto/rand"
 	"crypto/subtle"
+	"encoding/base64"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"hash"
+	"hash/crc64"
 	"io"
 	"math"
 
@@ -38,12 +41,115 @@ import (
  * ---------------------------------------------------------------- */
 
 type keypair struct {
-	public_key  [32]byte
-	private_key [32]byte
+	public  [32]byte
+	private [32]byte
 }
 
 func (kp keypair) String() string {
-	return fmt.Sprintf("Private Key: %x\nPublic Key: %x\n", kp.private_key, kp.public_key)
+	return fmt.Sprintf("Private Key: %x\nPublic Key: %x\n", kp.private, kp.public)
+}
+
+type secret struct {
+	static       keypair
+	remotePublic [32]byte
+	preShared    [32]byte
+}
+
+// 3 * 32-byte keys (static private, remote public, pre-shared), and the crc64 checksum
+const secretBytesLength = 3*32 + 8
+
+func crc64checksumISO(b []byte) uint64 {
+	return crc64.Checksum(b, crc64.MakeTable(crc64.ISO))
+}
+
+func (s secret) secretBytes() []byte {
+	combined := make([]byte, 0, secretBytesLength)
+	combined = append(combined, s.static.private[:]...)
+	combined = append(combined, s.remotePublic[:]...)
+	combined = append(combined, s.preShared[:]...)
+
+	checksum := crc64checksumISO(combined)
+	combined = binary.LittleEndian.AppendUint64(combined, checksum)
+
+	return combined
+}
+
+func (s secret) EncodeHex() []byte {
+	combined := s.secretBytes()
+
+	out := make([]byte, hex.EncodedLen(len(combined)))
+	hex.Encode(out, combined)
+	return out
+}
+
+func (s secret) EncodeBase64() []byte {
+	combined := s.secretBytes()
+
+	out := make([]byte, base64.URLEncoding.EncodedLen(len(combined)))
+	base64.URLEncoding.Encode(out, combined)
+
+	return out
+}
+
+func (s secret) String() string {
+	return string(s.EncodeHex())
+}
+
+func decodeSecretBytes(b []byte) (secret, error) {
+	if len(b) != secretBytesLength {
+		return secret{}, fmt.Errorf("incorrect length: got %d, wanted %d", len(b), secretBytesLength)
+	}
+
+	checksum1 := binary.LittleEndian.Uint64(b[96:])
+	checksum2 := crc64checksumISO(b[0:96])
+
+	if checksum1 != checksum2 {
+		return secret{}, fmt.Errorf("checksum does not match")
+	}
+
+	privateKey := [32]byte(b[0:32])
+
+	return secret{
+		static: keypair{
+			public:  generatePublicKey(privateKey),
+			private: privateKey,
+		},
+		remotePublic: [32]byte(b[32:64]),
+		preShared:    [32]byte(b[64:96]),
+	}, nil
+}
+
+func DecodeSecretHex(s []byte) (secret, error) {
+	secretBytes := make([]byte, hex.DecodedLen(len(s)))
+
+	_, err := hex.Decode(secretBytes, s)
+	if err != nil {
+		return secret{}, fmt.Errorf("decoding hex error: %w", err)
+	}
+
+	return decodeSecretBytes(secretBytes)
+}
+
+func DecodeSecretBase64(s []byte) (secret, error) {
+	secretBytes := make([]byte, base64.URLEncoding.DecodedLen(len(s)))
+
+	_, err := base64.URLEncoding.Decode(secretBytes, s)
+	if err != nil {
+		return secret{}, fmt.Errorf("decoding hex error: %w", err)
+	}
+
+	return decodeSecretBytes(secretBytes)
+}
+
+func DecodeSecret(s []byte) (secret, error) {
+	switch len(s) {
+	case 140:
+		return DecodeSecretBase64(s)
+	case 208:
+		return DecodeSecretHex(s)
+	default:
+		return secret{}, fmt.Errorf("invalid secret length: %d", len(s))
+	}
 }
 
 type messagebuffer struct {
@@ -103,14 +209,14 @@ var minNonce = uint64(0)
  * ---------------------------------------------------------------- */
 
 func getPublicKey(kp *keypair) [32]byte {
-	return kp.public_key
+	return kp.public
 }
 
 func isEmptyKey(k [32]byte) bool {
 	return subtle.ConstantTimeCompare(k[:], emptyKey[:]) == 1
 }
 
-func validatePublicKey(k []byte) bool {
+func validatePublicKey(k [32]byte) bool {
 	forbiddenCurveValues := [12][]byte{
 		{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
 		{1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
@@ -148,21 +254,26 @@ func dh(private_key [32]byte, public_key [32]byte) [32]byte {
 	return ss
 }
 
+func generateKey() [32]byte {
+	var k [32]byte
+	_, _ = rand.Read(k[:])
+	return k
+}
+
 func generateKeypair() keypair {
-	var public_key [32]byte
-	var private_key [32]byte
-	_, _ = rand.Read(private_key[:])
-	curve25519.ScalarBaseMult(&public_key, &private_key)
-	if validatePublicKey(public_key[:]) {
-		return keypair{public_key, private_key}
+	privateKey := generateKey()
+	publicKey := generatePublicKey(privateKey)
+
+	if validatePublicKey(publicKey) {
+		return keypair{publicKey, privateKey}
 	}
 	return generateKeypair()
 }
 
-func generatePublicKey(private_key [32]byte) [32]byte {
-	var public_key [32]byte
-	curve25519.ScalarBaseMult(&public_key, &private_key)
-	return public_key
+func generatePublicKey(privateKey [32]byte) [32]byte {
+	var publicKey [32]byte
+	curve25519.ScalarBaseMult(&publicKey, &privateKey)
+	return publicKey
 }
 
 func encrypt(k [32]byte, n uint64, ad []byte, plaintext []byte) []byte {
@@ -340,7 +451,7 @@ func initializeInitiator(prologue []byte, s keypair, rs [32]byte, psk [32]byte) 
 	name := []byte("Noise_KKpsk2_25519_ChaChaPoly_BLAKE2s")
 	ss = initializeSymmetric(name)
 	mixHash(&ss, prologue)
-	mixHash(&ss, s.public_key[:])
+	mixHash(&ss, s.public[:])
 	mixHash(&ss, rs[:])
 	return handshakestate{ss, s, e, rs, re, psk}
 }
@@ -353,7 +464,7 @@ func initializeResponder(prologue []byte, s keypair, rs [32]byte, psk [32]byte) 
 	ss = initializeSymmetric(name)
 	mixHash(&ss, prologue)
 	mixHash(&ss, rs[:])
-	mixHash(&ss, s.public_key[:])
+	mixHash(&ss, s.public[:])
 	return handshakestate{ss, s, e, rs, re, psk}
 }
 
@@ -362,11 +473,11 @@ func writeMessageA(hs *handshakestate, payload []byte) (*handshakestate, message
 	var messageBuffer messagebuffer
 	ne, ns, ciphertext := emptyKey, []byte{}, []byte{}
 	hs.e = generateKeypair()
-	ne = hs.e.public_key
+	ne = hs.e.public
 	mixHash(&hs.ss, ne[:])
-	mixKey(&hs.ss, hs.e.public_key)
-	mixKey(&hs.ss, dh(hs.e.private_key, hs.rs))
-	mixKey(&hs.ss, dh(hs.s.private_key, hs.rs))
+	mixKey(&hs.ss, hs.e.public)
+	mixKey(&hs.ss, dh(hs.e.private, hs.rs))
+	mixKey(&hs.ss, dh(hs.s.private, hs.rs))
 	_, ciphertext, err = encryptAndHash(&hs.ss, payload)
 	if err != nil {
 		return hs, messageBuffer, err
@@ -380,11 +491,11 @@ func writeMessageB(hs *handshakestate, payload []byte) ([32]byte, messagebuffer,
 	var messageBuffer messagebuffer
 	ne, ns, ciphertext := emptyKey, []byte{}, []byte{}
 	hs.e = generateKeypair()
-	ne = hs.e.public_key
+	ne = hs.e.public
 	mixHash(&hs.ss, ne[:])
-	mixKey(&hs.ss, hs.e.public_key)
-	mixKey(&hs.ss, dh(hs.e.private_key, hs.re))
-	mixKey(&hs.ss, dh(hs.e.private_key, hs.rs))
+	mixKey(&hs.ss, hs.e.public)
+	mixKey(&hs.ss, dh(hs.e.private, hs.re))
+	mixKey(&hs.ss, dh(hs.e.private, hs.rs))
 	mixKeyAndHash(&hs.ss, hs.psk)
 	_, ciphertext, err = encryptAndHash(&hs.ss, payload)
 	if err != nil {
@@ -413,13 +524,13 @@ func readMessageA(hs *handshakestate, message *messagebuffer) (*handshakestate, 
 	var plaintext []byte
 	var valid2 bool = false
 	var valid1 bool = true
-	if validatePublicKey(message.ne[:]) {
+	if validatePublicKey(message.ne) {
 		hs.re = message.ne
 	}
 	mixHash(&hs.ss, hs.re[:])
 	mixKey(&hs.ss, hs.re)
-	mixKey(&hs.ss, dh(hs.s.private_key, hs.re))
-	mixKey(&hs.ss, dh(hs.s.private_key, hs.rs))
+	mixKey(&hs.ss, dh(hs.s.private, hs.re))
+	mixKey(&hs.ss, dh(hs.s.private, hs.rs))
 	_, plaintext, valid2, err = decryptAndHash(&hs.ss, message.ciphertext)
 	return hs, plaintext, (valid1 && valid2), err
 }
@@ -429,13 +540,13 @@ func readMessageB(hs *handshakestate, message *messagebuffer) ([32]byte, []byte,
 	var plaintext []byte
 	var valid2 bool = false
 	var valid1 bool = true
-	if validatePublicKey(message.ne[:]) {
+	if validatePublicKey(message.ne) {
 		hs.re = message.ne
 	}
 	mixHash(&hs.ss, hs.re[:])
 	mixKey(&hs.ss, hs.re)
-	mixKey(&hs.ss, dh(hs.e.private_key, hs.re))
-	mixKey(&hs.ss, dh(hs.s.private_key, hs.re))
+	mixKey(&hs.ss, dh(hs.e.private, hs.re))
+	mixKey(&hs.ss, dh(hs.s.private, hs.re))
 	mixKeyAndHash(&hs.ss, hs.psk)
 	_, plaintext, valid2, err = decryptAndHash(&hs.ss, message.ciphertext)
 	cs1, cs2 := split(&hs.ss)
@@ -512,5 +623,26 @@ func RecvMessage(session *noisesession, message *messagebuffer) (*noisesession, 
 }
 
 func main() {
-	fmt.Println(generateKeypair())
+	server := generateKeypair()
+	client := generateKeypair()
+	psk := generateKey()
+
+	serverSecret := secret{
+		static:       server,
+		remotePublic: client.public,
+		preShared:    psk,
+	}
+	clientSecret := secret{
+		static:       client,
+		remotePublic: server.public,
+		preShared:    psk,
+	}
+
+	fmt.Printf("Server Secret: %s\n", serverSecret.EncodeBase64())
+	fmt.Printf("Client Secret: %s\n", clientSecret.EncodeHex())
+
+	decodedServer, err := DecodeSecret(serverSecret.EncodeBase64())
+	fmt.Printf("%#v\n%#v\nErr: %s\n", serverSecret, decodedServer, err)
+	decodedClient, err := DecodeSecret(clientSecret.EncodeBase64())
+	fmt.Printf("%#v\n%#v\nErr: %s\n", clientSecret, decodedClient, err)
 }
