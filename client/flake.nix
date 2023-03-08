@@ -1,24 +1,26 @@
 {
-    inputs = {
+  inputs = {
     flake-utils.url = "github:numtide/flake-utils";
+    rust-overlay.url = "github:oxalica/rust-overlay";
   };
 
-    outputs = { self, nixpkgs, flake-utils }:
-    flake-utils.lib.eachDefaultSystem
-      (system: let
-        pkgs = nixpkgs.legacyPackages.${system};
-      in
-        {
-          devShell = pkgs.mkShell {
-            buildInputs = with pkgs; [
-              (pkgs.writeShellScriptBin "vscode-html-language-server" "exec -a $0 ${nodePackages.vscode-html-languageserver-bin}/bin/html-languageserver $0")
-              (pkgs.writeShellScriptBin "vscode-css-language-server" "exec -a $0 ${nodePackages.vscode-css-languageserver-bin}/bin/css-languageserver $0")
-              nodePackages.prettier
-              rustc
-              cargo
-              wasm-pack
-            ];
-          };
-        }
-      );
+  outputs = { self, nixpkgs, flake-utils, rust-overlay }:
+  flake-utils.lib.eachDefaultSystem (system:
+    let
+      overlays = [ rust-overlay.overlays.default ];
+      pkgs = import nixpkgs { inherit system overlays; };
+      rust = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
+    in
+      {
+        devShell = pkgs.mkShell {
+          buildInputs = with pkgs; [
+            (pkgs.writeShellScriptBin "vscode-html-language-server" "exec -a $0 ${nodePackages.vscode-html-languageserver-bin}/bin/html-languageserver $0")
+            (pkgs.writeShellScriptBin "vscode-css-language-server" "exec -a $0 ${nodePackages.vscode-css-languageserver-bin}/bin/css-languageserver $0")
+            nodePackages.prettier
+            wasm-pack
+            wasm-bindgen-cli
+          ] ++ [ rust ];
+        };
+      }
+    );
 }
