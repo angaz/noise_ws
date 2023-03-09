@@ -1,5 +1,6 @@
 #[derive(Debug)]
 pub enum NoiseError {
+    ChecksumError,
     DecryptionError,
     UnsupportedMessageLengthError,
     ExhaustedNonceError,
@@ -13,17 +14,23 @@ pub enum NoiseError {
     MissingneError,
     MissingHsMacError,
     MissingrsError,
-    MissingreError
+    MissingreError,
 }
 
 impl std::fmt::Display for NoiseError {
     #[inline]
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match *self {
+            NoiseError::ChecksumError => write!(f, "Checksum doesn't match."),
             NoiseError::DecryptionError => write!(f, "Unsuccesful decryption."),
             NoiseError::UnsupportedMessageLengthError => write!(f, "Unsupported Message Length."),
-            NoiseError::ExhaustedNonceError => write!(f, "Reached maximum number of messages that can be sent for this session."),
-            NoiseError::DerivePublicKeyFromEmptyKeyError => write!(f, "Unable to derive PublicKey."),
+            NoiseError::ExhaustedNonceError => write!(
+                f,
+                "Reached maximum number of messages that can be sent for this session."
+            ),
+            NoiseError::DerivePublicKeyFromEmptyKeyError => {
+                write!(f, "Unable to derive PublicKey.")
+            }
             NoiseError::InvalidKeyError => write!(f, "Invalid Key."),
             NoiseError::InvalidPublicKeyError => write!(f, "Invalid Public Key."),
             NoiseError::EmptyKeyError => write!(f, "Empty Key."),

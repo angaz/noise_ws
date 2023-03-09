@@ -3,7 +3,7 @@
  * ---------------------------------------------------------------- */
 
 use crate::{
-    consts::{HASHLEN, MAC_LENGTH, MAX_MESSAGE},
+    consts::{DHLEN, HASHLEN, MAC_LENGTH, MAX_MESSAGE, SECRET_DATA_LEN},
     error::NoiseError,
     state::{CipherState, HandshakeState},
     types::{Hash, Keypair, PrivateKey, Psk, PublicKey},
@@ -39,6 +39,7 @@ pub struct NoiseSession {
     i: bool,
     is_transport: bool,
 }
+
 impl NoiseSession {
     /// Returns `true` if a handshake has been successfully performed and the session is in transport mode, or false otherwise.
     pub fn is_transport(&self) -> bool {
@@ -148,20 +149,41 @@ impl NoiseSession {
         }
     }
 
-    pub fn init_session_from_secret(secret: &[u8]) -> Result<NoiseSession, NoiseError> {
-        let mut secret_data = [0u8; 32 * 3];
+    fn verify_secret_crc(secret: &[u8; SECRET_DATA_LEN]) -> Result<(), NoiseError> {
+        let crc_offset = 3 * DHLEN;
+        let checksum1 = ((secret[crc_offset] as u32) << 0)
+            + ((secret[crc_offset + 1] as u32) << 8)
+            + ((secret[crc_offset + 2] as u32) << 16)
+            + ((secret[crc_offset + 3] as u32) << 24);
+        let checksum2 = crc32fast::hash(&secret[..crc_offset]);
+
+        if checksum1 != checksum2 {
+            Err(NoiseError::ChecksumError)
+        } else {
+            Ok(())
+        }
+    }
+
+    pub fn init_session_from_secret_string(secret: &[u8]) -> Result<NoiseSession, NoiseError> {
+        let mut secret_data = [0u8; SECRET_DATA_LEN];
         match hex::decode_to_slice(secret, &mut secret_data) {
             Ok(_) => (),
             Err(e) => return Err(NoiseError::Hex(e)),
         };
 
+        NoiseSession::verify_secret_crc(&secret_data)?;
+
         let s = Keypair::from_key(PrivateKey::from_bytes(from_slice_hashlen(
             &secret_data[0..],
         )))?;
-        let rs = PublicKey::from_bytes(from_slice_hashlen(&secret_data[32..]))?;
-        let psk = Psk::from_bytes(from_slice_hashlen(&secret_data[64..]));
+        let rs = PublicKey::from_bytes(from_slice_hashlen(&secret_data[DHLEN..]))?;
+        let psk = Psk::from_bytes(from_slice_hashlen(&secret_data[2 * DHLEN..]));
 
         Ok(NoiseSession::init_session(true, b"asdf", s, Some(rs), psk))
+    }
+
+    pub fn init_session_from_secret_string_js(secret: &str) -> Result<NoiseSession, JsValue> {
+        NoiseSession::init_session_from_secret_string(secret.as_bytes())
     }
 
     /// Takes a `&mut [u8]` containing plaintext as a parameter.
