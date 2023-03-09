@@ -26,7 +26,7 @@ import (
 	"errors"
 	"fmt"
 	"hash"
-	"hash/crc64"
+	"hash/crc32"
 	"io"
 	"math"
 
@@ -55,11 +55,19 @@ type secret struct {
 	preShared    [32]byte
 }
 
-// 3 * 32-byte keys (static private, remote public, pre-shared), and the crc64 checksum
-const secretBytesLength = 3*32 + 8
+// 3 * 32-byte keys (static private, remote public, pre-shared), and the crc32 checksum
+const secretBytesLength = 3*32 + 4
 
-func crc64checksumISO(b []byte) uint64 {
-	return crc64.Checksum(b, crc64.MakeTable(crc64.ISO))
+var (
+	base64URL          = base64.URLEncoding
+	binaryLE           = binary.LittleEndian
+	crc32Checksum      = crc32.ChecksumIEEE
+	secretBase64Length = base64URL.EncodedLen(secretBytesLength)
+	secretHexLength    = hex.EncodedLen(secretBytesLength)
+)
+
+func crc32KChecksum(b []byte) uint32 {
+	return crc32.Checksum(b, crc32.MakeTable(crc32.Koopman))
 }
 
 func (s secret) secretBytes() []byte {
@@ -68,8 +76,10 @@ func (s secret) secretBytes() []byte {
 	combined = append(combined, s.remotePublic[:]...)
 	combined = append(combined, s.preShared[:]...)
 
-	checksum := crc64checksumISO(combined)
-	combined = binary.LittleEndian.AppendUint64(combined, checksum)
+	combined = binaryLE.AppendUint32(
+		combined,
+		crc32Checksum(combined),
+	)
 
 	return combined
 }
@@ -77,7 +87,7 @@ func (s secret) secretBytes() []byte {
 func (s secret) EncodeHex() []byte {
 	combined := s.secretBytes()
 
-	out := make([]byte, hex.EncodedLen(len(combined)))
+	out := make([]byte, secretHexLength)
 	hex.Encode(out, combined)
 	return out
 }
@@ -85,8 +95,8 @@ func (s secret) EncodeHex() []byte {
 func (s secret) EncodeBase64() []byte {
 	combined := s.secretBytes()
 
-	out := make([]byte, base64.URLEncoding.EncodedLen(len(combined)))
-	base64.URLEncoding.Encode(out, combined)
+	out := make([]byte, secretBase64Length)
+	base64URL.Encode(out, combined)
 
 	return out
 }
@@ -95,16 +105,23 @@ func (s secret) String() string {
 	return string(s.EncodeHex())
 }
 
+func verifySecretCRC(b []byte) error {
+	checksum1 := binaryLE.Uint32(b[96:])
+	checksum2 := crc32Checksum(b[0:96])
+
+	if checksum1 != checksum2 {
+		return errors.New("checksum does not match")
+	}
+	return nil
+}
+
 func decodeSecretBytes(b []byte) (secret, error) {
 	if len(b) != secretBytesLength {
 		return secret{}, fmt.Errorf("incorrect length: got %d, wanted %d", len(b), secretBytesLength)
 	}
 
-	checksum1 := binary.LittleEndian.Uint64(b[96:])
-	checksum2 := crc64checksumISO(b[0:96])
-
-	if checksum1 != checksum2 {
-		return secret{}, fmt.Errorf("checksum does not match")
+	if err := verifySecretCRC(b); err != nil {
+		return secret{}, err
 	}
 
 	privateKey := [32]byte(b[0:32])
@@ -120,7 +137,7 @@ func decodeSecretBytes(b []byte) (secret, error) {
 }
 
 func DecodeSecretHex(s []byte) (secret, error) {
-	secretBytes := make([]byte, hex.DecodedLen(len(s)))
+	secretBytes := make([]byte, secretBytesLength)
 
 	_, err := hex.Decode(secretBytes, s)
 	if err != nil {
@@ -131,9 +148,9 @@ func DecodeSecretHex(s []byte) (secret, error) {
 }
 
 func DecodeSecretBase64(s []byte) (secret, error) {
-	secretBytes := make([]byte, base64.URLEncoding.DecodedLen(len(s)))
+	secretBytes := make([]byte, secretBytesLength)
 
-	_, err := base64.URLEncoding.Decode(secretBytes, s)
+	_, err := base64URL.Decode(secretBytes, s)
 	if err != nil {
 		return secret{}, fmt.Errorf("decoding hex error: %w", err)
 	}
@@ -143,9 +160,9 @@ func DecodeSecretBase64(s []byte) (secret, error) {
 
 func DecodeSecret(s []byte) (secret, error) {
 	switch len(s) {
-	case 140:
+	case secretBase64Length:
 		return DecodeSecretBase64(s)
-	case 208:
+	case secretHexLength:
 		return DecodeSecretHex(s)
 	default:
 		return secret{}, fmt.Errorf("invalid secret length: %d", len(s))
@@ -638,11 +655,14 @@ func main() {
 		preShared:    psk,
 	}
 
-	fmt.Printf("Server Secret: %s\n", serverSecret.EncodeBase64())
-	fmt.Printf("Client Secret: %s\n", clientSecret.EncodeHex())
+	ssb64 := serverSecret.EncodeBase64()
+	csh := clientSecret.EncodeHex()
 
-	decodedServer, err := DecodeSecret(serverSecret.EncodeBase64())
+	fmt.Printf("Server Secret (%d): %s\n", len(ssb64), ssb64)
+	fmt.Printf("Client Secret (%d): %s\n\n", len(csh), csh)
+
+	decodedServer, err := DecodeSecret(ssb64)
 	fmt.Printf("%#v\n%#v\nErr: %s\n", serverSecret, decodedServer, err)
-	decodedClient, err := DecodeSecret(clientSecret.EncodeBase64())
+	decodedClient, err := DecodeSecret(csh)
 	fmt.Printf("%#v\n%#v\nErr: %s\n", clientSecret, decodedClient, err)
 }
