@@ -14,7 +14,8 @@ pub const MAC_LENGTH: usize = 16_usize;
 pub(crate) const MAX_MESSAGE: usize = 0xFFFF;
 pub(crate) const MAX_NONCE: u64 = u64::max_value();
 pub(crate) const NONCE_LENGTH: usize = 12_usize;
-pub(crate) const SECRET_DATA_LEN: usize = 3 * DHLEN + CRC_LEN;
+pub(crate) const SECRET_DATA_CRC_OFFSET: usize = 3 * DHLEN;
+pub(crate) const SECRET_DATA_LEN: usize = SECRET_DATA_CRC_OFFSET + CRC_LEN;
 pub(crate) const ZEROLEN: [u8; 0] = [0_u8; 0];
 pub(crate) const forbidden_curve_values: [[u8; 32]; 12] = [
     [
