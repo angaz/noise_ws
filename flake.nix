@@ -2,14 +2,18 @@
   inputs = {
     flake-utils.url = "github:numtide/flake-utils";
     rust-overlay.url = "github:oxalica/rust-overlay";
+    zigpkg.url = "github:mitchellh/zig-overlay";
+    zlspkg.url = "github:zigtools/zls";
   };
 
-  outputs = { self, nixpkgs, flake-utils, rust-overlay }:
+  outputs = { self, nixpkgs, flake-utils, rust-overlay, zigpkg, zlspkg }:
   flake-utils.lib.eachDefaultSystem (system:
     let
       overlays = [ rust-overlay.overlays.default ];
       pkgs = import nixpkgs { inherit system overlays; };
       rust = pkgs.rust-bin.fromRustupToolchainFile ./client/rust-toolchain.toml;
+      zig = zigpkg.packages.${system}.master;
+      zls = zlspkg.packages.${system}.default;
     in
       {
         devShell = pkgs.mkShell {
@@ -23,7 +27,11 @@
             binaryen
             go_1_20
             gopls
-          ] ++ [ rust ];
+          ] ++ [
+            rust
+            zig
+            zls
+          ];
         };
       }
     );
