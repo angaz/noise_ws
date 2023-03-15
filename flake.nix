@@ -20,6 +20,7 @@
           buildInputs = with pkgs; [
             (pkgs.writeShellScriptBin "vscode-html-language-server" "exec -a $0 ${nodePackages.vscode-html-languageserver-bin}/bin/html-languageserver $0")
             (pkgs.writeShellScriptBin "vscode-css-language-server" "exec -a $0 ${nodePackages.vscode-css-languageserver-bin}/bin/css-languageserver $0")
+            nodePackages.typescript-language-server
             nodePackages.prettier
             rust-analyzer
             wasm-pack
