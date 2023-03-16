@@ -2,6 +2,12 @@
 <html>
 <head>
   <title>Noise WASM</title>
-  <script src="noise_kkpsk2.js"></script>
+  <script type="module">
+    import { NoiseSession } from './noise_kkpsk2.js';
+
+    window.NoiseSession = NoiseSession;
+  </script>
 </head>
+<body>
+</body>
 </html>

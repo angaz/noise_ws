@@ -1,8 +1,6 @@
 const std = @import("std");
 const defaultAllocator = std.heap.wasm_allocator;
 
-const NOISE_SESSION_SIZE = @sizeOf(NoiseSession);
-
 export fn alloc(size: usize) usize {
     var mem = defaultAllocator.alloc([*]u8, size) catch |err| {
         switch (err) {
@@ -30,29 +28,85 @@ export fn free(ptr: usize) void {
     defaultAllocator.free(@intToPtr([]u8, ptr));
 }
 
-const NoiseSession = struct {
+const KEY_LEN = 32;
+
+const Key = struct {
+    key: [KEY_LEN]u8 = undefined,
+
     const Self = @This();
 
-    pub fn create(allocator: std.mem.Allocator, secret: []const u8) !*NoiseSession {
-        _ = secret;
-        const session = try allocator.create(NoiseSession);
-        return session;
+    pub fn init(allocator: std.mem.Allocator, key: [KEY_LEN]u8) !Self {
+        return .{
+            .key = try allocator.dupe(u8, key),
+        };
     }
 
-    pub fn destroy(self: *Self, allocator: *std.mem.Allocator) void {
-        allocator.destroy(self);
-    }
-
-    pub fn encryptMessage(self: *Self, message: []const u8) []const u8 {
-        _ = self;
-        return message;
+    pub fn deinit(self: *Self, allocator: self.mem.Allocator) void {
+        allocator.free(self.key);
     }
 };
 
-export fn initializeSession(secret: [*]const u8, secretSize: usize) usize {
-    _ = secretSize;
-    _ = secret;
-    var noise = NoiseSession.create(defaultAllocator, "asdf1234") catch |err| {
+const Keypair = struct {
+    private: Key = undefined,
+    public: Key = undefined,
+
+    const Self = @This();
+
+    pub fn init(private: Key, public: Key) Self {
+        return .{
+            .private = private,
+            .public = public,
+        };
+    }
+};
+
+const HandshakeState = struct {
+    const Self = @This();
+
+    pub fn init(prologue: []const u8) Self {
+        _ = prologue;
+        return .{};
+    }
+};
+const NoiseSession = struct {
+    secret: []const u8,
+    handshake: HandshakeState = undefined,
+
+    const protocolName = "Noise_KKpsk2_25519_ChaChaPoly_BLAKE2s";
+    const Self = @This();
+
+    pub fn init(allocator: std.mem.Allocator, secret: []const u8) !*NoiseSession {
+        const session = try allocator.create(NoiseSession);
+        session.secret = try allocator.dupe(u8, secret);
+        session.handshake = HandshakeState.init("asdf");
+
+        return session;
+    }
+
+    pub fn deinit(self: *Self, allocator: *std.mem.Allocator) void {
+        allocator.destroy(self);
+    }
+
+    pub fn encryptMessage(self: *Self, allocator: std.mem.Allocator, message: []const u8) ![]const u8 {
+        var msg = try std.mem.concat(allocator, u8, &[_][]const u8{ self.secret, message });
+        for (msg, 0..) |c, i| {
+            if (i % 2 == 0) {
+                if (std.ascii.isLower(c)) {
+                    msg[i] = std.ascii.toUpper(c);
+                }
+            } else {
+                if (std.ascii.isUpper(c)) {
+                    msg[i] = std.ascii.toLower(c);
+                }
+            }
+        }
+
+        return msg;
+    }
+};
+
+export fn sessionInit(secret: [*]const u8, secretSize: usize) usize {
+    var noise = NoiseSession.init(defaultAllocator, secret[0..secretSize]) catch |err| {
         switch (err) {
             else => {
                 return 0;
@@ -62,7 +116,7 @@ export fn initializeSession(secret: [*]const u8, secretSize: usize) usize {
     return @ptrToInt(noise);
 }
 
-fn string(str: []const u8) usize {
+fn exportString(str: []const u8) usize {
     var mem = defaultAllocator.alloc(usize, 2) catch |err| {
         switch (err) {
             else => {
@@ -77,6 +131,12 @@ fn string(str: []const u8) usize {
 }
 
 export fn encryptMessage(session: *NoiseSession, message: [*]const u8, messageSize: usize) usize {
-    const out = session.encryptMessage(message[0..messageSize]);
-    return string(out);
+    const out = session.encryptMessage(defaultAllocator, message[0..messageSize]) catch |err| {
+        switch (err) {
+            else => {
+                return 0;
+            },
+        }
+    };
+    return exportString(out);
 }
