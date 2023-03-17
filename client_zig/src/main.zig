@@ -2,18 +2,7 @@ const std = @import("std");
 const defaultAllocator = std.heap.wasm_allocator;
 
 export fn alloc(size: usize) usize {
-    var mem = defaultAllocator.alloc([*]u8, size) catch |err| {
-        switch (err) {
-            else => {
-                return 0;
-            },
-        }
-    };
-    return @ptrToInt(mem.ptr);
-}
-
-export fn realloc(ptr: usize, size: usize) usize {
-    var mem = defaultAllocator.realloc(@intToPtr([]u8, ptr), size) catch |err| {
+    var mem = defaultAllocator.alloc(u8, size) catch |err| {
         switch (err) {
             else => {
                 return 0;
@@ -24,8 +13,20 @@ export fn realloc(ptr: usize, size: usize) usize {
     return @ptrToInt(mem.ptr);
 }
 
-export fn free(ptr: usize) void {
-    defaultAllocator.free(@intToPtr([]u8, ptr));
+export fn realloc(ptr: [*]u8, originalSize: usize, size: usize) usize {
+    var mem = defaultAllocator.realloc(ptr[0..originalSize], size) catch |err| {
+        switch (err) {
+            else => {
+                return 0;
+            },
+        }
+    };
+
+    return @ptrToInt(mem.ptr);
+}
+
+export fn free(ptr: [*]u8, size: usize) void {
+    defaultAllocator.free(ptr[0..size]);
 }
 
 const KEY_LEN = 32;
@@ -83,12 +84,13 @@ const NoiseSession = struct {
         return session;
     }
 
-    pub fn deinit(self: *Self, allocator: *std.mem.Allocator) void {
+    pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
         allocator.destroy(self);
     }
 
     pub fn encryptMessage(self: *Self, allocator: std.mem.Allocator, message: []const u8) ![]const u8 {
         var msg = try std.mem.concat(allocator, u8, &[_][]const u8{ self.secret, message });
+
         for (msg, 0..) |c, i| {
             if (i % 2 == 0) {
                 if (std.ascii.isLower(c)) {
@@ -116,7 +118,11 @@ export fn sessionInit(secret: [*]const u8, secretSize: usize) usize {
     return @ptrToInt(noise);
 }
 
-fn exportString(str: []const u8) usize {
+export fn sessionDeinit(session: *NoiseSession) void {
+    session.deinit(defaultAllocator);
+}
+
+fn exportArray(str: []const u8) usize {
     var mem = defaultAllocator.alloc(usize, 2) catch |err| {
         switch (err) {
             else => {
@@ -138,5 +144,5 @@ export fn encryptMessage(session: *NoiseSession, message: [*]const u8, messageSi
             },
         }
     };
-    return exportString(out);
+    return exportArray(out);
 }

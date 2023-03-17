@@ -26,27 +26,34 @@ function alloc(size) {
   return ptr
 }
 
-function free(ptr) {
-  wasmExports.free(ptr);
+function free(ptr, size) {
+  wasmExports.free(ptr, size);
 }
 
-function allocArray(bytes) {
-  const ptr = alloc(bytes.length);
-  const arr = new Uint8Array(wasmMemory.buffer, ptr, bytes.length);
+function allocInputArray(bytes) {
+  const size = bytes.length;
+  const ptr = alloc(size);
+  const arr = new Uint8Array(wasmMemory.buffer, ptr, size);
 
-  for (let i = 0; i < bytes.length; i++) {
+  for (let i = 0; i < size; i++) {
     arr[i] = bytes[i];
   }
 
-  return [ptr, bytes.length];
+  return [ptr, size];
 }
 
-function allocString(str) {
+function allocInputString(str) {
   const bytes = encoder.encode(str);
-  return allocArray(bytes);
+  return allocInputArray(bytes);
 }
 
-export function readArray(ptr) {
+function freeOutputArray(ptr) {
+  const [arrPtr, arrLen] = new Uint32Array(wasmMemory.buffer, ptr, 2);
+  free(arrPtr, arrLen);
+  free(ptr, 8);
+}
+
+export function readOutputArray(ptr) {
   const [arrPtr, arrLen] = new Uint32Array(wasmMemory.buffer, ptr, 2);
   const arr = new Uint8Array(wasmMemory.buffer, arrPtr, arrLen);
 
@@ -55,13 +62,11 @@ export function readArray(ptr) {
     outArr[i] = arr[i];
   }
 
-  // free(arrPtr);
-
   return outArr;
 }
 
-export function readString(ptr) {
-  const arr = readArray(ptr);
+export function readOutputString(ptr) {
+  const arr = readOutputArray(ptr);
   return decoder.decode(arr);
 }
 
@@ -71,19 +76,27 @@ export class NoiseSession {
       throw new Error("Webassembly not ready");
     }
 
-    const [secretPtr, secretLen] = allocString(secret);
+    const [secretPtr, secretLen] = allocInputString(secret);
     this.ptr = wasmExports.sessionInit(secretPtr, secretLen);
     free(secretPtr);
   }
 
-  encryptMessage(message) {
-    const [messagePtr, messageLen] = allocArray(message);
-    const encryptedPtr = wasmExports.encryptMessage(this.ptr, messagePtr, messageLen);
-    // free(messagePtr);
-
-    const outArr = readArray(encryptedPtr);
-    // free(encryptedPtr);
-
-    return outArr;
+  deinit() {
+    wasmExports.sessionDeinit(this.ptr);
   }
+
+  encryptMessage(message) {
+    const [messagePtr, messageLen] = allocInputArray(message);
+    const encryptedPtr = wasmExports.encryptMessage(this.ptr, messagePtr, messageLen);
+    free(messagePtr, messageLen);
+
+    const outArray = readOutputArray(encryptedPtr);
+    freeOutputArray(encryptedPtr);
+
+    return outArray;
+  }
+}
+
+export function bytesAllocated() {
+  return wasmMemory.buffer.byteLength;
 }

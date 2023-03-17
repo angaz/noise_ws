@@ -3,9 +3,10 @@
 <head>
   <title>Noise WASM</title>
   <script type="module">
-    import { NoiseSession } from './noise_kkpsk2.js';
+    import { NoiseSession, bytesAllocated } from './noise_kkpsk2.js';
 
     window.NoiseSession = NoiseSession;
+    window.bytesAllocated = bytesAllocated;
   </script>
 </head>
 <body>
