@@ -28,6 +28,7 @@
             binaryen
             go_1_20
             gopls
+            sfz
           ] ++ [
             rust
             zig
