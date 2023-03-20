@@ -47,7 +47,7 @@ export fn sessionDeinit(session: *NoiseSession) void {
     session.deinit(wasmAllocator);
 }
 
-fn exportArray(str: []const u8) usize {
+fn exportArray(arr: []const u8) usize {
     var mem = wasmAllocator.alloc(usize, 2) catch |err| {
         switch (err) {
             else => {
@@ -56,8 +56,8 @@ fn exportArray(str: []const u8) usize {
         }
     };
 
-    mem[0] = @ptrToInt(str.ptr);
-    mem[1] = str.len;
+    mem[0] = @ptrToInt(arr.ptr);
+    mem[1] = arr.len;
     return @ptrToInt(mem.ptr);
 }
 

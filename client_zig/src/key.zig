@@ -8,16 +8,20 @@ pub const Key = struct {
 
     const Self = @This();
 
-    pub fn init(allocator: Allocator, key: [KEY_LEN]u8) !Self {
+    pub fn init(key: [KEY_LEN]u8) Self {
         return .{
-            .key = try allocator.dupe(u8, key),
+            .key = key,
         };
     }
 
+    pub fn empty() Self {
+        return Self.init(std.mem.zeroes([KEY_LEN]u8));
+    }
+
     /// Generates a public key, given self is a private key.
-    pub fn genPubkey(self: *Self, allocator: Allocator) !Self {
+    pub fn genPubkey(self: *Self) !Self {
         return .{
-            .key = try allocator.dupe(u8, self.key),
+            .key = std.crypto.dh.X25519.recoverPublicKey(self.key),
         };
     }
 
@@ -32,10 +36,10 @@ pub const Keypair = struct {
 
     const Self = @This();
 
-    pub fn init(allocator: Allocator, private: Key) Self {
+    pub fn init(private: Key) Self {
         return .{
             .private = private,
-            .public = private.genPubkey(allocator),
+            .public = private.genPubkey(),
         };
     }
 };

@@ -27,17 +27,19 @@ function alloc(size) {
 }
 
 function free(ptr, size) {
+  if (size == 0) {
+    throw new Error("Cannot free 0 size array");
+  }
+
   wasmExports.free(ptr, size);
 }
 
 function allocInputArray(bytes) {
   const size = bytes.length;
   const ptr = alloc(size);
-  const arr = new Uint8Array(wasmMemory.buffer, ptr, size);
 
-  for (let i = 0; i < size; i++) {
-    arr[i] = bytes[i];
-  }
+  const arr = new Uint8Array(wasmMemory.buffer, ptr, size);
+  arr.set(bytes);
 
   return [ptr, size];
 }
@@ -49,6 +51,7 @@ function allocInputString(str) {
 
 function freeOutputArray(ptr) {
   const [arrPtr, arrLen] = new Uint32Array(wasmMemory.buffer, ptr, 2);
+  console.log(ptr);
   free(arrPtr, arrLen);
   free(ptr, 8);
 }
@@ -56,13 +59,7 @@ function freeOutputArray(ptr) {
 export function readOutputArray(ptr) {
   const [arrPtr, arrLen] = new Uint32Array(wasmMemory.buffer, ptr, 2);
   const arr = new Uint8Array(wasmMemory.buffer, arrPtr, arrLen);
-
-  const outArr = new Uint8Array(arrLen);
-  for (let i = 0; i < arrLen; i++) {
-    outArr[i] = arr[i];
-  }
-
-  return outArr;
+  return arr.slice();
 }
 
 export function readOutputString(ptr) {
