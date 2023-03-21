@@ -1,19 +1,16 @@
 const std = @import("std");
-const key = @import("./key.zig");
-const nonce = @import("./nonce.zig");
-const Key = key.Key;
-const Nonce = nonce.Nonce;
+const Key = @import("./key.zig").Key;
 
 pub const CipherState = struct {
     key: Key,
-    nonce: Nonce,
+    nonce: u64,
 
     const Self = @This();
 
     pub fn init() Self {
         return .{
             .key = Key.empty(),
-            .nonce = Nonce.init(),
+            .nonce = 0,
         };
     }
 };

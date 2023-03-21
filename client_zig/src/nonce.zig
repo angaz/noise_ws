@@ -4,7 +4,7 @@ pub const Nonce = struct {
     const Self = @This();
 
     pub fn init() Self {
-        return .{0};
+        return .{ .nonce = 0 };
     }
 
     pub fn inc(self: *Self) void {

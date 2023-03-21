@@ -33,7 +33,10 @@ export fn free(ptr: [*]u8, size: usize) void {
 }
 
 export fn sessionInit(secret: [*]const u8, secretSize: usize) usize {
-    var noise = NoiseSession.init(wasmAllocator, secret[0..secretSize]) catch |err| {
+    var prologue = std.mem.zeroes([8]u8);
+    std.mem.writeIntLittle(i64, &prologue, 42);
+
+    var noise = NoiseSession.initInitiator(wasmAllocator, secret[0..secretSize], prologue[0..]) catch |err| {
         switch (err) {
             else => {
                 return 0;

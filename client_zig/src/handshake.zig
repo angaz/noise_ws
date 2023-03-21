@@ -15,18 +15,25 @@ pub const HandshakeState = struct {
 
     /// The prologue is a bit of data transferred before the session starts.
     /// It forms part of the state to make sure it was not modified in transit.
-    pub fn init(
-        protocolName: []const u8,
+    pub fn initInitiator(
+        protocol_name: []const u8,
         prologue: []const u8,
-        static: Keypair,
-        remote_static: Keypair,
+        static_key: Keypair,
+        remote_static: Key,
         pre_shared_key: Key,
     ) Self {
-        _ = pre_shared_key;
-        _ = remote_static;
-        _ = static;
-        _ = prologue;
-        _ = protocolName;
-        return .{};
+        var symmetric_state = SymmetricState.init(protocol_name);
+        symmetric_state.mixHash(prologue);
+        symmetric_state.mixHash(&static_key.public.key);
+        symmetric_state.mixHash(&remote_static.key);
+
+        return .{
+            .symmetric_state = symmetric_state,
+            .static_key = static_key,
+            .ephemeral_key = Keypair.empty(),
+            .remote_static = remote_static,
+            .remote_ephemeral = Key.empty(),
+            .pre_shared_key = pre_shared_key,
+        };
     }
 };
