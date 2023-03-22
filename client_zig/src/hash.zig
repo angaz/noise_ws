@@ -8,19 +8,19 @@ fn initBlake2s() Blake2s256 {
 }
 
 pub const Hash = struct {
-    h: [HASH_LEN]u8 = undefined,
+    hash: [hash_len]u8 = undefined,
 
     const Self = @This();
-    pub const HASH_LEN = 32;
+    pub const hash_len = 32;
 
-    pub fn init(data: [HASH_LEN]u8) Self {
+    pub fn init(data: [hash_len]u8) Self {
         return .{
-            .h = data,
+            .hash = data,
         };
     }
 
     pub fn empty() Self {
-        return Self.init(std.mem.zeroes([HASH_LEN]u8));
+        return Self.init(std.mem.zeroes([hash_len]u8));
     }
 
     pub fn hash(data: []const u8) Self {
@@ -28,7 +28,7 @@ pub const Hash = struct {
         context.update(data);
 
         var h = Self.empty();
-        context.final(&h.h);
+        context.final(&h.hash);
 
         return h;
     }
@@ -39,7 +39,7 @@ pub const Hash = struct {
         context.update(data);
 
         var h = Self.empty();
-        context.final(&h.h);
+        context.final(&h.hash);
 
         return h;
     }

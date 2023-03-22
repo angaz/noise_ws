@@ -64,29 +64,31 @@ pub const NoiseSession = struct {
     handshake: HandshakeState,
     initiator: bool,
     handshake_hash: Hash = Hash.empty(),
-    cipher_state_local: CipherState = CipherState.init(),
-    cipher_state_remote: CipherState = CipherState.init(),
+    cipher_state_local: CipherState = CipherState.empty(),
+    cipher_state_remote: CipherState = CipherState.empty(),
     message_count: u128 = 0,
     transport: bool = false,
 
     const protocol_name = "Noise_KKpsk2_25519_ChaChaPoly_BLAKE2s";
     const Self = @This();
 
-    pub fn initInitiator(
+    pub fn init(
         allocator: Allocator,
+        initiator: bool,
         secret_str: []const u8,
         prologue: []const u8,
     ) !*NoiseSession {
         const session = try allocator.create(NoiseSession);
         session.secret = try Secret.decode(secret_str);
-        session.handshake = HandshakeState.initInitiator(
+        session.handshake = HandshakeState.init(
+            initiator,
             protocol_name,
             prologue,
             session.secret.static,
             session.secret.remote_public,
             session.secret.pre_shared,
         );
-        session.initiator = true;
+        session.initiator = initiator;
 
         return session;
     }
@@ -96,21 +98,16 @@ pub const NoiseSession = struct {
     }
 
     pub fn encryptMessage(self: *Self, allocator: Allocator, message: []const u8) ![]const u8 {
+        _ = message;
+        _ = allocator;
         _ = self;
-        var msg = try allocator.dupe(u8, message);
+        return "";
+    }
 
-        for (msg, 0..) |c, i| {
-            if (i % 2 == 0) {
-                if (std.ascii.isLower(c)) {
-                    msg[i] = std.ascii.toUpper(c);
-                }
-            } else {
-                if (std.ascii.isUpper(c)) {
-                    msg[i] = std.ascii.toLower(c);
-                }
-            }
-        }
-
-        return msg;
+    pub fn decryptMessage(self: *Self, allocator: Allocator, encrypted_message: []const u8) ![]const u8 {
+        _ = encrypted_message;
+        _ = allocator;
+        _ = self;
+        return "";
     }
 };

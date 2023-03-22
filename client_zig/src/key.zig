@@ -1,5 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const ChaCha20Poly1305 = std.crypto.aead.chacha_poly.ChaCha20Poly1305;
 
 pub const key_len = 32;
 
@@ -24,11 +25,53 @@ pub const Key = struct {
         return out;
     }
 
-    /// Generates a public key, given self is a private key.
-    pub fn genPubkey(self: Self) !Self {
+    pub fn genPrivateKey() Self {
+        var new = Self.empty();
+        std.crypto.random.bytes(&new.key);
+        return new;
+    }
+
+    pub fn genPublicKey(self: Self) !Self {
         return .{
             .key = try std.crypto.dh.X25519.recoverPublicKey(self.key),
         };
+    }
+
+    pub fn dh(self: Self, public: Self) ![key_len]u8 {
+        return try std.crypto.dh.X25519.scalarmult(self.key, public.key);
+    }
+
+    pub fn encrypt(self: Self, allocator: Allocator, nonce: u64, ad: []const u8, plaintext: []const u8) ![]const u8 {
+        var ciphertext = allocator.alloc(u8, plaintext.len + ChaCha20Poly1305.tag_length);
+        var npub = std.mem.zeroes([ChaCha20Poly1305.nonce_length]u8);
+        std.mem.writeIntSliceLittle(u64, &npub, nonce);
+
+        try ChaCha20Poly1305.encrypt(
+            ciphertext[0..plaintext.len],
+            ciphertext[plaintext.len..],
+            plaintext,
+            ad,
+            npub,
+            self.key,
+        );
+
+        return ciphertext;
+    }
+    pub fn decrypt(self: Self, allocator: Allocator, nonce: u64, ad: []const u8, ciphertext: []const u8) ![]const u8 {
+        var plaintext = allocator.alloc(u8, ciphertext.len - ChaCha20Poly1305.tag_length);
+        var npub = std.mem.zeroes([ChaCha20Poly1305.nonce_length]u8);
+        std.mem.writeIntSliceLittle(u64, &npub, nonce);
+
+        try ChaCha20Poly1305.decrypt(
+            plaintext,
+            ciphertext[0..plaintext.len],
+            ciphertext[plaintext.len..],
+            ad,
+            npub,
+            self.key,
+        );
+
+        return ciphertext;
     }
 };
 
@@ -41,7 +84,7 @@ pub const Keypair = struct {
     pub fn init(private: Key) !Self {
         return .{
             .private = private,
-            .public = try private.genPubkey(),
+            .public = try private.genPublicKey(),
         };
     }
 
@@ -50,5 +93,13 @@ pub const Keypair = struct {
             .private = Key.empty(),
             .public = Key.empty(),
         };
+    }
+
+    pub fn genKeypair() !Self {
+        return try Self.init(Key.genPrivateKey());
+    }
+
+    pub fn dh(self: Self, public: Key) ![key_len]u8 {
+        return try self.private.dh(public);
     }
 };
