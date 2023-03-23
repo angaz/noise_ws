@@ -23,6 +23,10 @@ pub const CipherState = struct {
         return Self.init(Key.empty());
     }
 
+    pub fn isEmpty(self: Self) bool {
+        return self.key.isEmpty();
+    }
+
     pub fn encryptWithAd(self: *Self, allocator: Allocator, ad: []const u8, plaintext: []const u8) ![]const u8 {
         if (self.nonce == std.math.maxInt(@TypeOf(self.nonce))) {
             return Error.MaxNonceReached;

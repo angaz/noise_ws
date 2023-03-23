@@ -38,7 +38,7 @@ pub const SymmetricState = struct {
         self.hash = Hash.hashWithContext(&self.hash.hash, data);
     }
 
-    pub fn mixKey(self: *Self, ikm: []const u8) void {
+    pub fn mixKey(self: *Self, ikm: Key) void {
         var out = std.mem.zeroes([Hash.hash_len * 2]u8);
 
         const prk = Hkdf.extract(self.chaining_key.hash, ikm);
@@ -48,10 +48,25 @@ pub const SymmetricState = struct {
         self.cipher_state = CipherState.init(Key.init(out[Hash.hash_len..]));
     }
 
+    pub fn mixKeyAndHash(self: *Self, ikm: Key)
+
     pub fn encryptAndHash(self: *Self, allocator: Allocator, plaintext: []const u8) ![]const u8 {
-        // TODO: Add empty key check, return plaintext
-        const ciphertext = try self.cipher_state.encryptWithAd(allocator, self.hash.hash, plaintext);
+        const ciphertext = if (self.cipher_state.isEmpty())
+            try allocator.dupe(u8, plaintext)
+        else
+            try self.cipher_state.encryptWithAd(allocator, self.hash.hash, plaintext);
+
         self.mixHash(ciphertext);
         return ciphertext;
+    }
+
+    pub fn decryptAndHash(self: *Self, allocator: Allocator, ciphertext: []const u8) ![]const u8 {
+        const plaintext = if (self.cipher_state.isEmpty())
+            try allocator.dupe(u8, ciphertext)
+        else
+            try self.cipher_state.decryptWithAd(allocator, self.hash.hash, ciphertext);
+
+        self.mixHash(ciphertext);
+        return plaintext;
     }
 };

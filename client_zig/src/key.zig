@@ -19,6 +19,16 @@ pub const Key = struct {
         return Self.init(std.mem.zeroes([key_len]u8));
     }
 
+    /// TODO: Yeah it's not really constant time, but I tried.
+    pub fn isEmpty(self: Self) bool {
+        var v: u8 = 0;
+        for (self.key) |c| {
+            v |= c;
+        }
+
+        return v == 0;
+    }
+
     pub fn copy(data: *[key_len]u8) Self {
         var out = Self.empty();
         std.mem.copy(u8, &out.key, data);
@@ -32,9 +42,7 @@ pub const Key = struct {
     }
 
     pub fn genPublicKey(self: Self) !Self {
-        return .{
-            .key = try std.crypto.dh.X25519.recoverPublicKey(self.key),
-        };
+        return Self.init(try std.crypto.dh.X25519.recoverPublicKey(self.key));
     }
 
     pub fn dh(self: Self, public: Self) ![key_len]u8 {
