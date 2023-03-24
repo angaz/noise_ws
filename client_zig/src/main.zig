@@ -64,13 +64,14 @@ fn exportArray(arr: []const u8) usize {
     return @ptrToInt(mem.ptr);
 }
 
-export fn encryptMessage(session: *NoiseSession, message: [*]const u8, messageSize: usize) usize {
-    const out = session.encryptMessage(wasmAllocator, message[0..messageSize]) catch |err| {
+export fn encrypt(session: *NoiseSession, plaintext: [*]const u8, plaintextLen: usize) usize {
+    const out = session.encryptAndEncode(wasmAllocator, plaintext[0..plaintextLen]) catch |err| {
         switch (err) {
             else => {
                 return 0;
             },
         }
     };
+
     return exportArray(out);
 }

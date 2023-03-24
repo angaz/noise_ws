@@ -1,5 +1,6 @@
 const std = @import("std");
 const Key = @import("./key.zig").Key;
+const Message = @import("./message.zig").Message;
 const Allocator = std.mem.Allocator;
 
 pub const Error = error{
@@ -27,22 +28,22 @@ pub const CipherState = struct {
         return self.key.isEmpty();
     }
 
-    pub fn encryptWithAd(self: *Self, allocator: Allocator, ad: []const u8, plaintext: []const u8) ![]const u8 {
+    pub fn encryptWithAd(self: *Self, allocator: Allocator, ad: []const u8, plaintext: []const u8) !Message {
         if (self.nonce == std.math.maxInt(@TypeOf(self.nonce))) {
             return Error.MaxNonceReached;
         }
 
-        const ciphertext = try self.key.encrypt(allocator, self.nonce, ad, plaintext);
+        const message = try self.key.encrypt(allocator, self.nonce, ad, plaintext);
         self.nonce += 1;
-        return ciphertext;
+        return message;
     }
 
-    pub fn decryptWithAd(self: *Self, allocator: Allocator, ad: []const u8, ciphertext: []const u8) ![]const u8 {
+    pub fn decryptWithAd(self: *Self, allocator: Allocator, ad: []const u8, message: Message) ![]const u8 {
         if (self.nonce == std.math.maxInt(@TypeOf(self.nonce))) {
             return Error.MaxNonceReached;
         }
 
-        const plaintext = try self.key.decrypt(allocator, self.nonce, ad, ciphertext);
+        const plaintext = try self.key.decrypt(allocator, self.nonce, ad, message);
         self.nonce += 1;
         return plaintext;
     }

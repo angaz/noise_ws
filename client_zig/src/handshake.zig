@@ -1,5 +1,7 @@
 const std = @import("std");
 const SymmetricState = @import("./symmetric_state.zig").SymmetricState;
+const CipherState = @import("./cipher_state.zig").CipherState;
+const Message = @import("./message.zig").Message;
 const key = @import("./key.zig");
 const Allocator = std.mem.Allocator;
 const Key = key.Key;
@@ -59,9 +61,9 @@ pub const HandshakeState = struct {
         };
     }
 
-    pub fn encryptMessageA(self: *Self, allocator: Allocator, payload: []const u8) ![]const u8 {
-        self.ephemeral_key = Keypair.genKeypair();
-        self.symmetric_state.mixHash(self.ephemeral_key.public);
+    pub fn encryptMessageA(self: *Self, allocator: Allocator, payload: []const u8) !Message {
+        self.ephemeral_key = try Keypair.genKeypair();
+        self.symmetric_state.mixHash(&self.ephemeral_key.public.key);
         self.symmetric_state.mixKey(self.ephemeral_key.public);
         self.symmetric_state.mixKey(try self.ephemeral_key.dh(self.remote_static));
         self.symmetric_state.mixKey(try self.static_key.dh(self.remote_static));
@@ -69,13 +71,24 @@ pub const HandshakeState = struct {
         return try self.symmetric_state.encryptAndHash(allocator, payload);
     }
 
-    pub fn encryptMessageB(self: *Self, allocator: Allocator, payload: []const u8) ![]const u8 {
-        _ = payload;
-        _ = allocator;
-        self.ephemeral_key = Keypair.genKeypair();
-        self.symmetric_state.mixHash(self.ephemeral_key.public);
+    pub fn encryptMessageB(
+        self: *Self,
+        allocator: Allocator,
+        payload: []const u8,
+        cs1: *CipherState,
+        cs2: *CipherState,
+    ) !Message {
+        self.ephemeral_key = try Keypair.genKeypair();
+        self.symmetric_state.mixHash(&self.ephemeral_key.public.key);
         self.symmetric_state.mixKey(self.ephemeral_key.public);
         self.symmetric_state.mixKey(try self.ephemeral_key.dh(self.remote_ephemeral));
         self.symmetric_state.mixKey(try self.static_key.dh(self.remote_static));
+        self.symmetric_state.mixKeyAndHash(self.pre_shared_key);
+
+        const message = try self.symmetric_state.encryptAndHash(allocator, payload);
+
+        self.symmetric_state.split(cs1, cs2);
+
+        return message;
     }
 };

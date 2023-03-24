@@ -1,11 +1,11 @@
 const std = @import("std");
 const CipherState = @import("./cipher_state.zig").CipherState;
 const Hash = @import("./hash.zig").Hash;
-const key = @import("./key.zig");
+const Key = @import("./key.zig").Key;
+const Message = @import("./message.zig").Message;
 const Allocator = std.mem.Allocator;
-const Key = key.Key;
 const Hkdf = std.crypto.kdf.hkdf.Hkdf(
-    std.crypto.kdf.hkdf.hmac.Hmac(
+    std.crypto.auth.hmac.Hmac(
         std.crypto.hash.blake2.Blake2s256,
     ),
 );
@@ -38,35 +38,54 @@ pub const SymmetricState = struct {
         self.hash = Hash.hashWithContext(&self.hash.hash, data);
     }
 
+    fn hkdf(self: *Self, ikm: Key, comptime n_keys: usize) [n_keys * Key.len]u8 {
+        var out = std.mem.zeroes([n_keys * Key.len]u8);
+        const prk = Hkdf.extract(&self.chaining_key.hash, &ikm.key);
+        Hkdf.expand(&out, "", prk);
+
+        return out;
+    }
+
     pub fn mixKey(self: *Self, ikm: Key) void {
-        var out = std.mem.zeroes([Hash.hash_len * 2]u8);
-
-        const prk = Hkdf.extract(self.chaining_key.hash, ikm);
-        Hkdf.expand(out, [_]u8{}, prk);
-
-        self.chaining_key.hash = out[0..Hash.hash_len];
-        self.cipher_state = CipherState.init(Key.init(out[Hash.hash_len..]));
+        const out = self.hkdf(ikm, 2);
+        self.chaining_key = Hash.init(out[0..Key.len].*);
+        self.cipher_state = CipherState.init(Key.init(out[Key.len..].*));
     }
 
-    pub fn mixKeyAndHash(self: *Self, ikm: Key)
+    pub fn mixKeyAndHash(self: *Self, ikm: Key) void {
+        const h1 = Hash.len;
+        const h2 = h1 * 2;
 
-    pub fn encryptAndHash(self: *Self, allocator: Allocator, plaintext: []const u8) ![]const u8 {
-        const ciphertext = if (self.cipher_state.isEmpty())
-            try allocator.dupe(u8, plaintext)
+        const out = self.hkdf(ikm, 3);
+        self.chaining_key = Hash.init(out[0..h1].*);
+        self.mixHash(out[h1..h2]);
+        self.cipher_state = CipherState.init(Key.init(out[h2..].*));
+    }
+
+    pub fn encryptAndHash(self: *Self, allocator: Allocator, plaintext: []const u8) !Message {
+        const message = if (self.cipher_state.isEmpty())
+            Message.emptyWithCiphertext(try allocator.dupe(u8, plaintext))
         else
-            try self.cipher_state.encryptWithAd(allocator, self.hash.hash, plaintext);
+            try self.cipher_state.encryptWithAd(allocator, &self.hash.hash, plaintext);
 
-        self.mixHash(ciphertext);
-        return ciphertext;
+        self.mixHash(message.ciphertext);
+        return message;
     }
 
-    pub fn decryptAndHash(self: *Self, allocator: Allocator, ciphertext: []const u8) ![]const u8 {
+    pub fn decryptAndHash(self: *Self, allocator: Allocator, message: Message) ![]const u8 {
         const plaintext = if (self.cipher_state.isEmpty())
-            try allocator.dupe(u8, ciphertext)
+            try allocator.dupe(u8, message.ciphertext)
         else
-            try self.cipher_state.decryptWithAd(allocator, self.hash.hash, ciphertext);
+            try self.cipher_state.decryptWithAd(allocator, &self.hash.hash, message);
 
-        self.mixHash(ciphertext);
+        self.mixHash(message.ciphertext);
         return plaintext;
+    }
+
+    pub fn split(self: *Self, cs1: *CipherState, cs2: *CipherState) void {
+        const out = self.hkdf(Key.empty(), 2);
+
+        cs1.key = Key.init(out[0..Key.len].*);
+        cs2.key = Key.init(out[Key.len..].*);
     }
 };

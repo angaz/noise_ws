@@ -2,6 +2,7 @@ const std = @import("std");
 const HandshakeState = @import("./handshake.zig").HandshakeState;
 const Hash = @import("./hash.zig").Hash;
 const CipherState = @import("./cipher_state.zig").CipherState;
+const Message = @import("message.zig").Message;
 const key = @import("./key.zig");
 const Allocator = std.mem.Allocator;
 const Key = key.Key;
@@ -19,7 +20,7 @@ const Secret = struct {
     const Self = @This();
 
     const crc_len = 4;
-    const bytes_len = (3 * key.key_len) + crc_len;
+    const bytes_len = (3 * Key.len) + crc_len;
     const base64_len = (bytes_len + 2) / 3 * 4;
     const hex_len = bytes_len * 2;
 
@@ -35,15 +36,15 @@ const Secret = struct {
         try verifyCRC(&decoded);
 
         return .{
-            .static = try Keypair.init(Key.copy(decoded[0..key.key_len])),
-            .remote_public = Key.copy(decoded[key.key_len .. 2 * key.key_len]),
-            .pre_shared = Key.copy(decoded[2 * key.key_len .. 3 * key.key_len]),
+            .static = try Keypair.init(Key.copy(decoded[0..Key.len])),
+            .remote_public = Key.copy(decoded[Key.len .. 2 * Key.len]),
+            .pre_shared = Key.copy(decoded[2 * Key.len .. 3 * Key.len]),
         };
     }
 
     fn verifyCRC(decoded: []const u8) CRCError!void {
-        const checksum1 = std.mem.readIntSliceLittle(u32, decoded[3 * key.key_len ..]);
-        const checksum2 = std.hash.Crc32.hash(decoded[0 .. 3 * key.key_len]);
+        const checksum1 = std.mem.readIntSliceLittle(u32, decoded[3 * Key.len ..]);
+        const checksum2 = std.hash.Crc32.hash(decoded[0 .. 3 * Key.len]);
 
         if (checksum1 != checksum2) {
             return CRCError.NotEqual;
@@ -97,15 +98,37 @@ pub const NoiseSession = struct {
         allocator.destroy(self);
     }
 
-    pub fn encryptMessage(self: *Self, allocator: Allocator, message: []const u8) ![]const u8 {
-        _ = message;
-        _ = allocator;
-        _ = self;
-        return "";
+    pub fn encrypt(self: *Self, allocator: Allocator, plaintext: []const u8) !Message {
+        defer self.message_count += 1;
+
+        if (self.message_count == 0) {
+            return try self.handshake.encryptMessageA(allocator, plaintext);
+        }
+        if (self.message_count == 1) {
+            return try self.handshake.encryptMessageB(
+                allocator,
+                plaintext,
+                &self.cipher_state_local,
+                &self.cipher_state_remote,
+            );
+        }
+
+        if (self.initiator) {
+            return try self.cipher_state_local.encryptWithAd(allocator, "", plaintext);
+        } else {
+            return try self.cipher_state_remote.encryptWithAd(allocator, "", plaintext);
+        }
     }
 
-    pub fn decryptMessage(self: *Self, allocator: Allocator, encrypted_message: []const u8) ![]const u8 {
-        _ = encrypted_message;
+    pub fn encryptAndEncode(self: *Self, allocator: Allocator, plaintext: []const u8) ![]const u8 {
+        const message = try self.encrypt(allocator, plaintext);
+        const out = message.encode(allocator);
+        allocator.free(message.ciphertext);
+        return out;
+    }
+
+    pub fn decryptMessage(self: *Self, allocator: Allocator, message: Message) ![]const u8 {
+        _ = message;
         _ = allocator;
         _ = self;
         return "";
