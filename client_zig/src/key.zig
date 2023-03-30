@@ -1,9 +1,8 @@
 const std = @import("std");
 const Message = @import("./message.zig").Message;
+const fillRandom = @import("./random.zig").fillRandom;
 const Allocator = std.mem.Allocator;
 const ChaCha20Poly1305 = std.crypto.aead.chacha_poly.ChaCha20Poly1305;
-
-extern fn getRandomValues(ptr: usize, length: usize) void;
 
 pub const Key = struct {
     key: [Self.len]u8,
@@ -31,7 +30,7 @@ pub const Key = struct {
         return v == 0;
     }
 
-    pub fn copy(data: *[Self.len]u8) Self {
+    pub fn copy(data: *const [Self.len]u8) Self {
         var out = Self.empty();
         std.mem.copy(u8, &out.key, data);
         return out;
@@ -39,7 +38,7 @@ pub const Key = struct {
 
     pub fn genPrivateKey() Self {
         var new = Self.empty();
-        getRandomValues(@ptrToInt(&new.key), Self.len);
+        fillRandom(&new.key);
         return new;
     }
 

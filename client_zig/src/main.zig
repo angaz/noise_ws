@@ -32,11 +32,16 @@ export fn free(ptr: [*]u8, size: usize) void {
     wasmAllocator.free(ptr[0..size]);
 }
 
-export fn sessionInit(secret: [*]const u8, secretSize: usize) usize {
+export fn sessionInit(initiator: bool, secret: [*]const u8, secretSize: usize) usize {
     var prologue = std.mem.zeroes([8]u8);
     std.mem.writeIntLittle(i64, &prologue, 42);
 
-    var noise = NoiseSession.init(wasmAllocator, true, secret[0..secretSize], prologue[0..]) catch |err| {
+    var noise = NoiseSession.init(
+        wasmAllocator,
+        initiator,
+        secret[0..secretSize],
+        prologue[0..],
+    ) catch |err| {
         switch (err) {
             else => {
                 return 0;
@@ -66,6 +71,18 @@ fn exportArray(arr: []const u8) usize {
 
 export fn encrypt(session: *NoiseSession, plaintext: [*]const u8, plaintextLen: usize) usize {
     const out = session.encryptAndEncode(wasmAllocator, plaintext[0..plaintextLen]) catch |err| {
+        switch (err) {
+            else => {
+                return 0;
+            },
+        }
+    };
+
+    return exportArray(out);
+}
+
+export fn decrypt(session: *NoiseSession, message: [*]const u8, messageLen: usize) usize {
+    const out = session.decodeAndDecrypt(wasmAllocator, message[0..messageLen]) catch |err| {
         switch (err) {
             else => {
                 return 0;

@@ -52,11 +52,18 @@ pub const Message = struct {
             return Error.InvalidBuffer;
         }
 
+        var tag = std.mem.zeroes([Self.tag_len]u8);
+        std.mem.copy(u8, &tag, in[Key.len * 2 .. Key.len * 2 + Self.tag_len]);
+
         return .{
-            .ephemeral = in[0..Key.len],
-            .static = in[Key.len .. Key.len * 2],
-            .tag = in[Key.len * 2 .. Key.len * 2 + Self.tag_len],
+            .ephemeral = Key.copy(in[0..Key.len]),
+            .static = Key.copy(in[Key.len .. Key.len * 2]),
+            .tag = tag,
             .ciphertext = in[Key.len * 2 + Self.tag_len ..],
         };
+    }
+
+    pub fn decode(in: []const u8) Error!Self {
+        return Self.readFrom(in);
     }
 };

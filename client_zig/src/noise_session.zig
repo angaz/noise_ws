@@ -122,15 +122,35 @@ pub const NoiseSession = struct {
 
     pub fn encryptAndEncode(self: *Self, allocator: Allocator, plaintext: []const u8) ![]const u8 {
         const message = try self.encrypt(allocator, plaintext);
-        const out = message.encode(allocator);
+        const encoded = message.encode(allocator);
         allocator.free(message.ciphertext);
-        return out;
+        return encoded;
     }
 
-    pub fn decryptMessage(self: *Self, allocator: Allocator, message: Message) ![]const u8 {
-        _ = message;
-        _ = allocator;
-        _ = self;
-        return "";
+    pub fn decrypt(self: *Self, allocator: Allocator, message: Message) ![]const u8 {
+        defer self.message_count += 1;
+
+        if (self.message_count == 0) {
+            return try self.handshake.decryptMessageA(allocator, message);
+        }
+        if (self.message_count == 1) {
+            return try self.handshake.decryptMessageB(
+                allocator,
+                message,
+                &self.cipher_state_local,
+                &self.cipher_state_remote,
+            );
+        }
+
+        if (self.initiator) {
+            return try self.cipher_state_remote.decryptWithAd(allocator, "", message);
+        } else {
+            return try self.cipher_state_local.decryptWithAd(allocator, "", message);
+        }
+    }
+
+    pub fn decodeAndDecrypt(self: *Self, allocator: Allocator, message: []const u8) ![]const u8 {
+        const decoded = try Message.decode(message);
+        return try self.decrypt(allocator, decoded);
     }
 };

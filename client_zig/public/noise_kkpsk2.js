@@ -7,8 +7,11 @@ const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
 WebAssembly
-  .instantiateStreaming(fetch("wasm/noise_kkpsk2.wasm"), {})
-  .then(result => {
+  .instantiateStreaming(fetch("wasm/noise_kkpsk2.wasm"), {
+    env: {
+      getRandomValues,
+    },
+  }).then(result => {
     wasmInstance = result.instance;
     wasmExports = wasmInstance.exports;
     wasmMemory = wasmExports.memory;
@@ -51,9 +54,13 @@ function allocInputString(str) {
 
 function freeOutputArray(ptr) {
   const [arrPtr, arrLen] = new Uint32Array(wasmMemory.buffer, ptr, 2);
-  console.log(ptr);
   free(arrPtr, arrLen);
   free(ptr, 8);
+}
+
+function getRandomValues(ptr, len) {
+  const arr = new Uint8Array(wasmMemory.buffer, ptr, len);
+  crypto.getRandomValues(arr);
 }
 
 export function readOutputArray(ptr) {
@@ -68,29 +75,44 @@ export function readOutputString(ptr) {
 }
 
 export class NoiseSession {
-  constructor(secret) {
+  constructor(initiator, secret) {
     if (ready === false) {
       throw new Error("Webassembly not ready");
     }
 
     const [secretPtr, secretLen] = allocInputString(secret);
-    this.ptr = wasmExports.sessionInit(secretPtr, secretLen);
+    this.ptr = wasmExports.sessionInit(initiator, secretPtr, secretLen);
     free(secretPtr);
+
+    if (this.ptr === 0) {
+      throw new Error("NoiseSession init failed");
+    }
   }
 
   deinit() {
     wasmExports.sessionDeinit(this.ptr);
   }
 
-  encryptMessage(message) {
+  encrypt(message) {
     const [messagePtr, messageLen] = allocInputArray(message);
-    const encryptedPtr = wasmExports.encryptMessage(this.ptr, messagePtr, messageLen);
+    const encryptedPtr = wasmExports.encrypt(this.ptr, messagePtr, messageLen);
     free(messagePtr, messageLen);
 
     const outArray = readOutputArray(encryptedPtr);
     freeOutputArray(encryptedPtr);
 
     return outArray;
+  }
+
+  decrypt(payload) {
+    const [payloadPtr, payloadLen] = allocInputArray(payload);
+    const decryptedPtr = wasmExports.decrypt(this.ptr, payloadPtr, payloadLen);
+    free(payloadPtr, payloadLen);
+
+    const plaintext = readOutputArray(decryptedPtr);
+    freeOutputArray(decryptedPtr);
+
+    return plaintext;
   }
 }
 
