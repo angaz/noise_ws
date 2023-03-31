@@ -1,5 +1,7 @@
 const std = @import("std");
 const Message = @import("./message.zig").Message;
+const Ciphertext = @import("ciphertext.zig").Ciphertext;
+const Tag16 = @import("tag.zig").Tag16;
 const fillRandom = @import("./random.zig").fillRandom;
 const Allocator = std.mem.Allocator;
 const ChaCha20Poly1305 = std.crypto.aead.chacha_poly.ChaCha20Poly1305;
@@ -50,35 +52,33 @@ pub const Key = struct {
         return try std.crypto.dh.X25519.scalarmult(self.key, public.key);
     }
 
-    pub fn encrypt(self: Self, allocator: Allocator, nonce: u64, ad: []const u8, plaintext: []const u8) !Message {
+    pub fn encrypt(self: Self, allocator: Allocator, nonce: u64, ad: []const u8, plaintext: []const u8) !Ciphertext {
         var ciphertext = try allocator.alloc(u8, plaintext.len);
         var npub = std.mem.zeroes([ChaCha20Poly1305.nonce_length]u8);
         std.mem.writeIntSliceLittle(u64, &npub, nonce);
-
-        var message = Message.empty();
+        var tag = Tag16.empty();
 
         ChaCha20Poly1305.encrypt(
             ciphertext,
-            &message.tag,
+            &tag.tag,
             plaintext,
             ad,
             npub,
             self.key,
         );
 
-        message.ciphertext = ciphertext;
-        return message;
+        return Ciphertext.init(tag, ciphertext);
     }
 
-    pub fn decrypt(self: Self, allocator: Allocator, nonce: u64, ad: []const u8, message: Message) ![]const u8 {
-        var plaintext = try allocator.alloc(u8, message.ciphertext.len);
+    pub fn decrypt(self: Self, allocator: Allocator, nonce: u64, ad: []const u8, ciphertext: Ciphertext) ![]const u8 {
+        var plaintext = try allocator.alloc(u8, ciphertext.ciphertext.len);
         var npub = std.mem.zeroes([ChaCha20Poly1305.nonce_length]u8);
         std.mem.writeIntSliceLittle(u64, &npub, nonce);
 
         try ChaCha20Poly1305.decrypt(
             plaintext,
-            message.ciphertext,
-            message.tag,
+            ciphertext.ciphertext,
+            ciphertext.tag.tag,
             ad,
             npub,
             self.key,

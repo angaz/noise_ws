@@ -53,7 +53,11 @@ function allocInputString(str) {
 }
 
 function freeOutputArray(ptr) {
-  const [arrPtr, arrLen] = new Uint32Array(wasmMemory.buffer, ptr, 2);
+  const [arrPtr, arrLen] = extractArrayPointerLength(ptr);
+  if (arrPtr === 0) {
+    throw new Error("Pointer is 0");
+  }
+
   free(arrPtr, arrLen);
   free(ptr, 8);
 }
@@ -63,8 +67,20 @@ function getRandomValues(ptr, len) {
   crypto.getRandomValues(arr);
 }
 
+function extractArrayPointerLength(ptr) {
+  if (ptr === 0) {
+    throw new Error("Pointer is 0");
+  }
+
+  return new Uint32Array(wasmMemory.buffer, ptr, 2);
+}
+
 export function readOutputArray(ptr) {
-  const [arrPtr, arrLen] = new Uint32Array(wasmMemory.buffer, ptr, 2);
+  const [arrPtr, arrLen] = extractArrayPointerLength(ptr);
+  if (arrPtr === 0) {
+    throw new Error("Pointer is 0");
+  }
+
   const arr = new Uint8Array(wasmMemory.buffer, arrPtr, arrLen);
   return arr.slice();
 }

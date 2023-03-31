@@ -1,5 +1,6 @@
 const std = @import("std");
 const Key = @import("key.zig").Key;
+const Ciphertext = @import("ciphertext.zig").Ciphertext;
 const Allocator = std.mem.Allocator;
 const ChaCha20Poly1305 = std.crypto.aead.chacha_poly.ChaCha20Poly1305;
 
@@ -10,35 +11,46 @@ pub const Error = error{
 pub const Message = struct {
     ephemeral: Key,
     static: Key,
-    tag: [Self.tag_len]u8,
-    ciphertext: []const u8,
+    ciphertext: Ciphertext,
 
     const Self = @This();
-    const tag_len = ChaCha20Poly1305.tag_length;
-    const bufferSizeWithoutCiphertext = Key.len * 2 + Self.tag_len;
 
-    pub fn emptyWithCiphertext(ciphertext: []const u8) Self {
+    pub fn init(
+        ephemeral: Key,
+        static: Key,
+        ciphertext: Ciphertext,
+    ) Self {
         return .{
-            .ephemeral = Key.empty(),
-            .static = Key.empty(),
-            .tag = std.mem.zeroes([Self.tag_len]u8),
+            .ephemeral = ephemeral,
+            .static = static,
             .ciphertext = ciphertext,
         };
     }
 
+    pub fn deinit(self: Self, allocator: Allocator) void {
+        self.ciphertext.deinit(allocator);
+    }
+
+    pub fn emptyWithCiphertext(ciphertext: Ciphertext) Self {
+        return Self.init(
+            Key.empty(),
+            Key.empty(),
+            ciphertext,
+        );
+    }
+
     pub fn empty() Self {
-        return Self.emptyWithCiphertext("");
+        return Self.emptyWithCiphertext(Ciphertext.empty());
     }
 
     pub fn encodedLength(self: Self) usize {
-        return Self.bufferSizeWithoutCiphertext + self.ciphertext.len;
+        return Key.len * 2 + self.ciphertext.len();
     }
 
     pub fn writeTo(self: Self, out: []u8) void {
         std.mem.copy(u8, out, &self.ephemeral.key);
         std.mem.copy(u8, out[Key.len..], &self.static.key);
-        std.mem.copy(u8, out[Key.len * 2 ..], &self.tag);
-        std.mem.copy(u8, out[Key.len * 2 + Self.tag_len ..], self.ciphertext);
+        self.ciphertext.writeTo(out[Key.len * 2 ..]);
     }
 
     pub fn encode(self: Self, allocator: Allocator) ![]const u8 {
@@ -47,20 +59,12 @@ pub const Message = struct {
         return out;
     }
 
-    pub fn readFrom(in: []const u8) Error!Self {
-        if (in.len < Self.bufferSizeWithoutCiphertext) {
-            return Error.InvalidBuffer;
-        }
-
-        var tag = std.mem.zeroes([Self.tag_len]u8);
-        std.mem.copy(u8, &tag, in[Key.len * 2 .. Key.len * 2 + Self.tag_len]);
-
-        return .{
-            .ephemeral = Key.copy(in[0..Key.len]),
-            .static = Key.copy(in[Key.len .. Key.len * 2]),
-            .tag = tag,
-            .ciphertext = in[Key.len * 2 + Self.tag_len ..],
-        };
+    pub fn readFrom(in: []const u8) Self {
+        return Self.init(
+            Key.copy(in[0..Key.len]),
+            Key.copy(in[Key.len .. Key.len * 2]),
+            Ciphertext.readFrom(in[Key.len * 2 ..]),
+        );
     }
 
     pub fn decode(in: []const u8) Error!Self {

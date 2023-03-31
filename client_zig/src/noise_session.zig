@@ -2,6 +2,7 @@ const std = @import("std");
 const HandshakeState = @import("./handshake.zig").HandshakeState;
 const Hash = @import("./hash.zig").Hash;
 const CipherState = @import("./cipher_state.zig").CipherState;
+const Ciphertext = @import("ciphertext.zig").Ciphertext;
 const Message = @import("message.zig").Message;
 const key = @import("./key.zig");
 const Allocator = std.mem.Allocator;
@@ -64,11 +65,10 @@ pub const NoiseSession = struct {
     secret: Secret,
     handshake: HandshakeState,
     initiator: bool,
-    handshake_hash: Hash = Hash.empty(),
-    cipher_state_local: CipherState = CipherState.empty(),
-    cipher_state_remote: CipherState = CipherState.empty(),
-    message_count: u128 = 0,
-    transport: bool = false,
+    handshake_hash: Hash,
+    cipher_state_local: CipherState,
+    cipher_state_remote: CipherState,
+    message_count: u128,
 
     const protocol_name = "Noise_KKpsk2_25519_ChaChaPoly_BLAKE2s";
     const Self = @This();
@@ -90,6 +90,10 @@ pub const NoiseSession = struct {
             session.secret.pre_shared,
         );
         session.initiator = initiator;
+        session.handshake_hash = Hash.empty();
+        session.cipher_state_local = CipherState.empty();
+        session.cipher_state_remote = CipherState.empty();
+        session.message_count = 0;
 
         return session;
     }
@@ -98,7 +102,7 @@ pub const NoiseSession = struct {
         allocator.destroy(self);
     }
 
-    pub fn encrypt(self: *Self, allocator: Allocator, plaintext: []const u8) !Message {
+    pub fn encrypt(self: *Self, allocator: Allocator, plaintext: []const u8) !Ciphertext {
         defer self.message_count += 1;
 
         if (self.message_count == 0) {
@@ -121,9 +125,16 @@ pub const NoiseSession = struct {
     }
 
     pub fn encryptAndEncode(self: *Self, allocator: Allocator, plaintext: []const u8) ![]const u8 {
-        const message = try self.encrypt(allocator, plaintext);
+        const ciphertext = try self.encrypt(allocator, plaintext);
+
+        const message = Message.init(
+            self.handshake.ephemeral_key.public,
+            self.handshake.static_key.public,
+            ciphertext,
+        );
         const encoded = message.encode(allocator);
-        allocator.free(message.ciphertext);
+        message.deinit(allocator);
+
         return encoded;
     }
 
@@ -143,9 +154,9 @@ pub const NoiseSession = struct {
         }
 
         if (self.initiator) {
-            return try self.cipher_state_remote.decryptWithAd(allocator, "", message);
+            return try self.cipher_state_remote.decryptWithAd(allocator, "", message.ciphertext);
         } else {
-            return try self.cipher_state_local.decryptWithAd(allocator, "", message);
+            return try self.cipher_state_local.decryptWithAd(allocator, "", message.ciphertext);
         }
     }
 

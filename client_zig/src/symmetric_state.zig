@@ -3,6 +3,8 @@ const CipherState = @import("./cipher_state.zig").CipherState;
 const Hash = @import("./hash.zig").Hash;
 const Key = @import("./key.zig").Key;
 const Message = @import("./message.zig").Message;
+const Ciphertext = @import("ciphertext.zig").Ciphertext;
+const Tag16 = @import("tag.zig").Tag16;
 const Allocator = std.mem.Allocator;
 const Hkdf = std.crypto.kdf.hkdf.Hkdf(
     std.crypto.auth.hmac.Hmac(
@@ -62,23 +64,23 @@ pub const SymmetricState = struct {
         self.cipher_state = CipherState.init(Key.init(out[h2..].*));
     }
 
-    pub fn encryptAndHash(self: *Self, allocator: Allocator, plaintext: []const u8) !Message {
-        const message = if (self.cipher_state.isEmpty())
-            Message.emptyWithCiphertext(try allocator.dupe(u8, plaintext))
+    pub fn encryptAndHash(self: *Self, allocator: Allocator, plaintext: []const u8) !Ciphertext {
+        const ciphertext = if (self.cipher_state.isEmpty())
+            Ciphertext.init(Tag16.empty(), try allocator.dupe(u8, plaintext))
         else
             try self.cipher_state.encryptWithAd(allocator, &self.hash.hash, plaintext);
 
-        self.mixHash(message.ciphertext);
-        return message;
+        self.mixHash(ciphertext.ciphertext);
+        return ciphertext;
     }
 
-    pub fn decryptAndHash(self: *Self, allocator: Allocator, message: Message) ![]const u8 {
+    pub fn decryptAndHash(self: *Self, allocator: Allocator, ciphertext: Ciphertext) ![]const u8 {
         const plaintext = if (self.cipher_state.isEmpty())
-            try allocator.dupe(u8, message.ciphertext)
+            try allocator.dupe(u8, ciphertext.ciphertext)
         else
-            try self.cipher_state.decryptWithAd(allocator, &self.hash.hash, message);
+            try self.cipher_state.decryptWithAd(allocator, &self.hash.hash, ciphertext);
 
-        self.mixHash(message.ciphertext);
+        self.mixHash(ciphertext.ciphertext);
         return plaintext;
     }
 
