@@ -23,21 +23,21 @@ function test() {
   logAllocated();
   const start = Date.now();
 
-  const iterations = 10;
+  const iterations = 1000;
   for (let i = 0; i < iterations; i++) {
-    const e1 = client.encrypt(encoder.encode("This is my message. Keep it safe."));
+    const e1 = client.encrypt(encoder.encode(`This is my message. Keep it safe. i = ${i}`));
     const d1 = decoder.decode(server.decrypt(e1));
     console.log(d1);
-    const e2 = server.encrypt(encoder.encode("Don't worry, your message is safe."));
+    const e2 = server.encrypt(encoder.encode(`Don't worry, your message is safe. i = ${i}`));
     const d2 = decoder.decode(client.decrypt(e2));
     console.log(d2)
   }
 
-  client.deinit();
-  server.deinit();
-
   const end = Date.now();
   const duration = (end - start) / 1000;
+
+  client.deinit();
+  server.deinit();
 
   logAllocated();
   console.log(`${(iterations/duration).toFixed(2)} messages per second`);

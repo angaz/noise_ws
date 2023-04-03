@@ -9,7 +9,13 @@ const decoder = new TextDecoder();
 WebAssembly
   .instantiateStreaming(fetch("wasm/noise_kkpsk2.wasm"), {
     env: {
-      getRandomValues,
+      getRandomValues: (ptr, size) => {
+        const arr = new Uint8Array(wasmMemory.buffer, ptr, size);
+        crypto.getRandomValues(arr);
+      },
+      throw: (ptr, size) => {
+        throw new Error(decoder.decode(new Uint8Array(wasmMemory.buffer, ptr, size)));
+      },
     },
   }).then(result => {
     wasmInstance = result.instance;
@@ -60,11 +66,6 @@ function freeOutputArray(ptr) {
 
   free(arrPtr, arrLen);
   free(ptr, 8);
-}
-
-function getRandomValues(ptr, len) {
-  const arr = new Uint8Array(wasmMemory.buffer, ptr, len);
-  crypto.getRandomValues(arr);
 }
 
 function extractArrayPointerLength(ptr) {
