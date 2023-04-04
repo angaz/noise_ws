@@ -5,8 +5,8 @@ const Ciphertext = @import("ciphertext.zig").Ciphertext;
 const Message = @import("./message.zig").Message;
 const key = @import("./key.zig");
 const Allocator = std.mem.Allocator;
-const Key = key.Key;
-const Keypair = key.Keypair;
+const Key = key.Key32;
+const Keypair = key.Keypair32;
 
 fn initSymmetricState(
     initiator: bool,

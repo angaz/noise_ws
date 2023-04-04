@@ -40,7 +40,7 @@ function test() {
   server.deinit();
 
   logAllocated();
-  console.log(`${(iterations/duration).toFixed(2)} messages per second`);
+  console.log(`${iterations} messages in ${duration.toFixed(2)} seconds (${(iterations/duration).toFixed(2)} m/s)`);
 }
 
 test();

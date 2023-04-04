@@ -1,65 +1,26 @@
 const std = @import("std");
-const HandshakeState = @import("./handshake.zig").HandshakeState;
-const Hash = @import("./hash.zig").Hash;
-const CipherState = @import("./cipher_state.zig").CipherState;
+const HandshakeState = @import("handshake.zig").HandshakeState;
+const Hash = @import("hash.zig").Hash;
+const CipherState = @import("cipher_state.zig").CipherState;
 const Ciphertext = @import("ciphertext.zig").Ciphertext;
-const Message = @import("message.zig").Message;
-const key = @import("./key.zig");
+const message = @import("message.zig");
+const key = @import("key.zig");
 const Allocator = std.mem.Allocator;
 const Key = key.Key;
 const Keypair = key.Keypair;
+const secret = @import("secret.zig");
 
-const CRCError = error{
-    NotEqual,
+const InitError = error{
+    CRCNotEqual,
+    IdentityElement,
+    InvalidCharacter,
+    InvalidLength,
+    InvalidPadding,
+    NoSpaceLeft,
+    OutOfMemory,
 };
 
-const Secret = struct {
-    static: Keypair,
-    remote_public: Key,
-    pre_shared: Key,
-
-    const Self = @This();
-
-    const crc_len = 4;
-    const bytes_len = (3 * Key.len) + crc_len;
-    const base64_len = (bytes_len + 2) / 3 * 4;
-    const hex_len = bytes_len * 2;
-
-    pub fn decode(secret: []const u8) !Self {
-        var decoded = std.mem.zeroes([Self.bytes_len]u8);
-
-        switch (secret.len) {
-            Self.base64_len => try base64URLDecode(&decoded, secret),
-            Self.hex_len => try hexDecode(&decoded, secret),
-            else => return error.InvalidLength,
-        }
-
-        try verifyCRC(&decoded);
-
-        return .{
-            .static = try Keypair.init(Key.copy(decoded[0..Key.len])),
-            .remote_public = Key.copy(decoded[Key.len .. 2 * Key.len]),
-            .pre_shared = Key.copy(decoded[2 * Key.len .. 3 * Key.len]),
-        };
-    }
-
-    fn verifyCRC(decoded: []const u8) CRCError!void {
-        const checksum1 = std.mem.readIntSliceLittle(u32, decoded[3 * Key.len ..]);
-        const checksum2 = std.hash.Crc32.hash(decoded[0 .. 3 * Key.len]);
-
-        if (checksum1 != checksum2) {
-            return CRCError.NotEqual;
-        }
-    }
-
-    fn base64URLDecode(dest: []u8, source: []const u8) std.base64.Error!void {
-        return std.base64.Base64Decoder.decode(&std.base64.url_safe.Decoder, dest, source);
-    }
-
-    fn hexDecode(dest: []u8, source: []const u8) !void {
-        _ = try std.fmt.hexToBytes(dest, source);
-    }
-};
+const Secret = secret.Secret(key.Key32);
 
 pub const NoiseSession = struct {
     secret: Secret,
@@ -78,7 +39,7 @@ pub const NoiseSession = struct {
         initiator: bool,
         secret_str: []const u8,
         prologue: []const u8,
-    ) !*NoiseSession {
+    ) InitError!*NoiseSession {
         const session = try allocator.create(NoiseSession);
         session.secret = try Secret.decode(secret_str);
         session.handshake = HandshakeState.init(
@@ -93,7 +54,6 @@ pub const NoiseSession = struct {
         session.handshake_hash = Hash.empty();
         session.cipher_state_local = CipherState.empty();
         session.cipher_state_remote = CipherState.empty();
-        session.message_count = 0;
 
         return session;
     }
@@ -102,40 +62,53 @@ pub const NoiseSession = struct {
         allocator.destroy(self);
     }
 
-    pub fn encrypt(self: *Self, allocator: Allocator, plaintext: []const u8) !Ciphertext {
-        defer self.message_count += 1;
+    pub fn encryptAndEncodeMessageA(self: *Self, allocator: Allocator) ![]const u8 {
+        const timestamp = std.time.milliTimestamp();
+        var plaintext = try allocator.alloc(u8, @sizeOf(@TypeOf(timestamp)));
+        defer allocator.free(plaintext);
+        std.mem.writeIntSliceLittle(u8, plaintext, timestamp);
 
-        if (self.message_count == 0) {
-            return try self.handshake.encryptMessageA(allocator, plaintext);
-        }
-        if (self.message_count == 1) {
-            return try self.handshake.encryptMessageB(
-                allocator,
-                plaintext,
-                &self.cipher_state_local,
-                &self.cipher_state_remote,
-            );
-        }
+        const ciphertext = try self.handshake.encryptMessageA(allocator, plaintext);
+        defer ciphertext.deinit(allocator);
 
-        if (self.initiator) {
-            return try self.cipher_state_local.encryptWithAd(allocator, "", plaintext);
-        } else {
-            return try self.cipher_state_remote.encryptWithAd(allocator, "", plaintext);
-        }
+        const msg = message.MessageHandshake{
+            .message_type = message.MessageType.handshake_initiation,
+            .ephemeral = self.handshake.ephemeral_key.public,
+            .ciphertext = ciphertext,
+        };
+        return try msg.encode(allocator);
+    }
+
+    pub fn encryptAndEncodeMessageB(self: *Self, allocator: Allocator) ![]const u8 {
+        const plaintext = std.mem.zeroes([16]u8);
+        const ciphertext = try self.handshake.encryptMessageB(
+            allocator,
+            plaintext,
+            &self.cipher_state_local,
+            &self.cipher_state_remote,
+        );
+        defer ciphertext.deinit(allocator);
+
+        const msg = message.MessageHandshake{
+            .message_type = message.MessageType.handshake_response,
+            .ephemeral = self.handshake.ephemeral_key.public,
+            .ciphertext = ciphertext,
+        };
+        return try msg.encode(allocator);
     }
 
     pub fn encryptAndEncode(self: *Self, allocator: Allocator, plaintext: []const u8) ![]const u8 {
-        const ciphertext = try self.encrypt(allocator, plaintext);
+        const ciphertext = if (self.initiator)
+            try self.cipher_state_local.encryptWithAd(allocator, "", plaintext)
+        else
+            try self.cipher_state_remote.encryptWithAd(allocator, "", plaintext);
+        defer ciphertext.deinit(allocator);
 
-        const message = Message.init(
-            self.handshake.ephemeral_key.public,
-            self.handshake.static_key.public,
-            ciphertext,
-        );
-        const encoded = message.encode(allocator);
-        message.deinit(allocator);
-
-        return encoded;
+        const msg = message.MessageData{
+            .message_type = message.MessageType.data,
+            .ciphertext = ciphertext,
+        };
+        return try msg.encode(allocator);
     }
 
     pub fn decrypt(self: *Self, allocator: Allocator, message: Message) ![]const u8 {

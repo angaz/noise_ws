@@ -1,5 +1,7 @@
 const std = @import("std");
 
+pub const Tag16 = Tag(16);
+
 pub fn Tag(comptime length: usize) type {
     return struct {
         tag: [Self.len]u8,
@@ -26,5 +28,3 @@ pub fn Tag(comptime length: usize) type {
         }
     };
 }
-
-pub const Tag16 = Tag(16);

@@ -7,7 +7,7 @@ const NoiseSession = noise_session.NoiseSession;
 extern fn throw(ptr: usize, size: usize) void;
 
 fn throwError(err: []const u8) void {
-    throw(@ptrToInt(err), err.len);
+    throw(@ptrToInt(err.ptr), err.len);
 }
 
 export fn alloc(size: usize) usize {

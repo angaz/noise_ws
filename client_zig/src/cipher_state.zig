@@ -1,5 +1,5 @@
 const std = @import("std");
-const Key = @import("./key.zig").Key;
+const Key = @import("./key.zig").Key32;
 const Message = @import("./message.zig").Message;
 const Ciphertext = @import("ciphertext.zig").Ciphertext;
 const Allocator = std.mem.Allocator;

@@ -8,21 +8,85 @@ pub const Error = error{
     InvalidBuffer,
 };
 
-pub const Message = struct {
+pub const MessageType = enum(u8) {
+    invalid,
+    handshake_initiation,
+    handshake_response,
+    data,
+};
+
+pub const MessageHandshake = struct {
+    message_type: MessageType,
     ephemeral: Key,
-    static: Key,
+    ciphertext: Ciphertext,
+
+    const Self = @This();
+
+    pub fn encode(self: Self, allocator: Allocator) ![]const u8 {
+        var encoded = allocator.alloc(u8, @sizeOf(MessageType) + self.ephemeral.len + self.ciphertext.len());
+        self.writeTo(encoded);
+        return encoded;
+    }
+
+    pub fn writeTo(self: Self, out: []u8) void {
+        std.mem.writeIntSliceLittle(u8, out, self.message_type);
+        std.mem.copy(u8, out[1..], &self.ephemeral.key);
+        self.ciphertext.writeTo(out[1 + Key.len ..]);
+    }
+
+    pub fn readFrom(in: []const u8) Self {
+        var message_type = std.mem.readIntSliceLittle(u8, in);
+        var ephemeral = Key.copy(in[1..Key.len]);
+        var ciphertext = Ciphertext.readFrom(in[1 + Key.len ..]);
+
+        return .{
+            .message_type = message_type,
+            .ephemeral = ephemeral,
+            .ciphertext = ciphertext,
+        };
+    }
+};
+
+pub const MessageData = struct {
+    message_type: MessageType,
+    ciphertext: Ciphertext,
+
+    const Self = @This();
+
+    pub fn encode(self: Self, allocator: Allocator) ![]const u8 {
+        var encoded = allocator.alloc(u8, @sizeOf(MessageType) + self.ciphertext.len());
+        self.writeTo(encoded);
+        return encoded;
+    }
+
+    pub fn writeTo(self: Self, out: []u8) void {
+        std.mem.writeIntSliceLittle(u8, out, self.message_type);
+        self.ciphertext.writeTo(out[1..]);
+    }
+
+    pub fn readFrom(in: []const u8) Self {
+        var message_type = std.mem.readIntSliceLittle(u8, in);
+        var ciphertext = Ciphertext.readFrom(in[1..]);
+
+        return .{
+            .message_type = message_type,
+            .ciphertext = ciphertext,
+        };
+    }
+};
+
+pub const MessageDoNotUse = struct {
+    ephemeral: Key,
     ciphertext: Ciphertext,
 
     const Self = @This();
 
     pub fn init(
         ephemeral: Key,
-        static: Key,
         ciphertext: Ciphertext,
     ) Self {
         return .{
             .ephemeral = ephemeral,
-            .static = static,
             .ciphertext = ciphertext,
         };
     }
@@ -34,7 +98,6 @@ pub const Message = struct {
     pub fn emptyWithCiphertext(ciphertext: Ciphertext) Self {
         return Self.init(
             Key.empty(),
-            Key.empty(),
             ciphertext,
         );
     }
@@ -44,13 +107,12 @@ pub const Message = struct {
     }
 
     pub fn encodedLength(self: Self) usize {
-        return Key.len * 2 + self.ciphertext.len();
+        return Key.len + self.ciphertext.len();
     }
 
     pub fn writeTo(self: Self, out: []u8) void {
         std.mem.copy(u8, out, &self.ephemeral.key);
-        std.mem.copy(u8, out[Key.len..], &self.static.key);
-        self.ciphertext.writeTo(out[Key.len * 2 ..]);
+        self.ciphertext.writeTo(out[Key.len..]);
     }
 
     pub fn encode(self: Self, allocator: Allocator) ![]const u8 {
@@ -62,8 +124,7 @@ pub const Message = struct {
     pub fn readFrom(in: []const u8) Self {
         return Self.init(
             Key.copy(in[0..Key.len]),
-            Key.copy(in[Key.len .. Key.len * 2]),
-            Ciphertext.readFrom(in[Key.len * 2 ..]),
+            Ciphertext.readFrom(in[Key.len..]),
         );
     }
 
