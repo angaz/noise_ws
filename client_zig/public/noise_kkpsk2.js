@@ -92,42 +92,91 @@ export function readOutputString(ptr) {
 }
 
 export class NoiseSession {
-  constructor(initiator, secret) {
+  constructor(initiator, secret, onMessageCB) {
     if (ready === false) {
       throw new Error("Webassembly not ready");
     }
+
+    this.onMessageCB = onMessageCB;
 
     const [secretPtr, secretLen] = allocInputString(secret);
     this.ptr = wasmExports.sessionInit(initiator, secretPtr, secretLen);
     free(secretPtr);
 
-    if (this.ptr === 0) {
-      throw new Error("NoiseSession init failed");
+    this.ready = false;
+  }
+
+  onMessage(event) {
+    const { data } = event;
+
+    // Data message
+    if (data[0] == 3) {
+      const plaintext = this.decrypt(data);
+      this.onMessageCB(plaintext);
+      return;
     }
+
+    // Handshake response message
+    if (data[0] == 2) {
+      this.decryptB(data);
+      return;
+    }
+  }
+
+  connect(hostname) {
+    this.websocket = new Websocket(hostname);
+    this.websocket.send(this.encryptA());
+    this.websocket.addEventListener("message", this.onMessage);
   }
 
   deinit() {
     wasmExports.sessionDeinit(this.ptr);
   }
 
-  encrypt(message) {
-    const [messagePtr, messageLen] = allocInputArray(message);
-    const encryptedPtr = wasmExports.encrypt(this.ptr, messagePtr, messageLen);
-    free(messagePtr, messageLen);
-
-    const outArray = readOutputArray(encryptedPtr);
-    freeOutputArray(encryptedPtr);
-
-    return outArray;
+  encryptA() {
+    const ciphertextPtr = wasmExports.encryptA(this.ptr);
+    const ciphertext = readOutputArray(ciphertextPtr);
+    freeOutputArray(ciphertextPtr);
+    return ciphertext;
   }
 
-  decrypt(payload) {
-    const [payloadPtr, payloadLen] = allocInputArray(payload);
-    const decryptedPtr = wasmExports.decrypt(this.ptr, payloadPtr, payloadLen);
-    free(payloadPtr, payloadLen);
+  encryptB() {
+    const ciphertextPtr = wasmExports.encryptB(this.ptr);
+    const ciphertext = readOutputArray(ciphertextPtr);
+    freeOutputArray(ciphertextPtr);
+    return ciphertext;
+  }
 
-    const plaintext = readOutputArray(decryptedPtr);
-    freeOutputArray(decryptedPtr);
+  encrypt(plaintext) {
+    const [plaintextPtr, plaintextLen] = allocInputArray(plaintext);
+    const ciphertextPtr = wasmExports.encrypt(this.ptr, plaintextPtr, plaintextLen);
+    free(plaintextPtr, plaintextLen);
+
+    const ciphertext = readOutputArray(ciphertextPtr);
+    freeOutputArray(ciphertextPtr);
+
+    return ciphertext;
+  }
+
+  decryptA(ciphertext) {
+    const [ciphertextPtr, ciphertextLen] = allocInputArray(ciphertext);
+    wasmExports.decryptA(this.ptr, ciphertextPtr, ciphertextLen);
+    free(ciphertextPtr, ciphertextLen);
+  }
+
+  decryptB(ciphertext) {
+    const [ciphertextPtr, ciphertextLen] = allocInputArray(ciphertext);
+    wasmExports.decryptB(this.ptr, ciphertextPtr, ciphertextLen);
+    free(ciphertextPtr, ciphertextLen);
+  }
+
+  decrypt(ciphertext) {
+    const [ciphertextPtr, ciphertextLen] = allocInputArray(ciphertext);
+    const plaintextPtr = wasmExports.decrypt(this.ptr, ciphertextPtr, ciphertextLen);
+    free(ciphertextPtr, ciphertextLen);
+
+    const plaintext = readOutputArray(plaintextPtr);
+    freeOutputArray(plaintextPtr);
 
     return plaintext;
   }

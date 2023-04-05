@@ -9,10 +9,10 @@ pub const Error = error{
 };
 
 pub const MessageType = enum(u8) {
-    invalid,
-    handshake_initiation,
-    handshake_response,
-    data,
+    invalid = 0,
+    handshake_initiation = 1,
+    handshake_response = 2,
+    data = 3,
 };
 
 pub const MessageHandshake = struct {
@@ -29,13 +29,13 @@ pub const MessageHandshake = struct {
     }
 
     pub fn writeTo(self: Self, out: []u8) void {
-        std.mem.writeIntSliceLittle(u8, out, self.message_type);
+        std.mem.writeIntSliceLittle(u8, out, @enumToInt(self.message_type));
         std.mem.copy(u8, out[1..], &self.ephemeral.key);
         self.ciphertext.writeTo(out[1 + Key.len ..]);
     }
 
     pub fn readFrom(in: []const u8) Self {
-        var message_type = std.mem.readIntSliceLittle(u8, in);
+        var message_type = @intToEnum(MessageType, std.mem.readIntSliceLittle(u8, in));
         var ephemeral = Key.copy(in[1..Key.len]);
         var ciphertext = Ciphertext.readFrom(in[1 + Key.len ..]);
 
@@ -54,18 +54,18 @@ pub const MessageData = struct {
     const Self = @This();
 
     pub fn encode(self: Self, allocator: Allocator) ![]const u8 {
-        var encoded = allocator.alloc(u8, @sizeOf(MessageType) + self.ciphertext.len());
+        var encoded = try allocator.alloc(u8, @sizeOf(MessageType) + self.ciphertext.len());
         self.writeTo(encoded);
         return encoded;
     }
 
     pub fn writeTo(self: Self, out: []u8) void {
-        std.mem.writeIntSliceLittle(u8, out, self.message_type);
+        std.mem.writeIntSliceLittle(u8, out, @enumToInt(self.message_type));
         self.ciphertext.writeTo(out[1..]);
     }
 
     pub fn readFrom(in: []const u8) Self {
-        var message_type = std.mem.readIntSliceLittle(u8, in);
+        var message_type = @intToEnum(MessageType, std.mem.readIntSliceLittle(u8, in));
         var ciphertext = Ciphertext.readFrom(in[1..]);
 
         return .{

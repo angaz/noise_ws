@@ -1,9 +1,9 @@
 const std = @import("std");
-const SymmetricState = @import("./symmetric_state.zig").SymmetricState;
-const CipherState = @import("./cipher_state.zig").CipherState;
+const SymmetricState = @import("symmetric_state.zig").SymmetricState;
+const CipherState = @import("cipher_state.zig").CipherState;
 const Ciphertext = @import("ciphertext.zig").Ciphertext;
-const Message = @import("./message.zig").Message;
-const key = @import("./key.zig");
+const message = @import("message.zig");
+const key = @import("key.zig");
 const Allocator = std.mem.Allocator;
 const Key = key.Key32;
 const Keypair = key.Keypair32;
@@ -72,14 +72,14 @@ pub const HandshakeState = struct {
         return try self.symmetric_state.encryptAndHash(allocator, payload);
     }
 
-    pub fn decryptMessageA(self: *Self, allocator: Allocator, message: Message) ![]const u8 {
-        self.remote_ephemeral = message.ephemeral;
+    pub fn decryptMessageA(self: *Self, allocator: Allocator, msg: message.MessageHandshake) ![]const u8 {
+        self.remote_ephemeral = msg.ephemeral;
         self.symmetric_state.mixHash(&self.remote_ephemeral.key);
         self.symmetric_state.mixKey(self.remote_ephemeral);
         self.symmetric_state.mixKey(try self.static_key.dh(self.remote_ephemeral));
         self.symmetric_state.mixKey(try self.static_key.dh(self.remote_static));
 
-        return try self.symmetric_state.decryptAndHash(allocator, message.ciphertext);
+        return try self.symmetric_state.decryptAndHash(allocator, msg.ciphertext);
     }
 
     pub fn encryptMessageB(
@@ -106,18 +106,18 @@ pub const HandshakeState = struct {
     pub fn decryptMessageB(
         self: *Self,
         allocator: Allocator,
-        message: Message,
+        msg: message.MessageHandshake,
         cs1: *CipherState,
         cs2: *CipherState,
     ) ![]const u8 {
-        self.remote_ephemeral = message.ephemeral;
+        self.remote_ephemeral = msg.ephemeral;
         self.symmetric_state.mixHash(&self.remote_ephemeral.key);
         self.symmetric_state.mixKey(self.remote_ephemeral);
         self.symmetric_state.mixKey(try self.ephemeral_key.dh(self.remote_ephemeral));
         self.symmetric_state.mixKey(try self.static_key.dh(self.remote_ephemeral));
         self.symmetric_state.mixKeyAndHash(self.pre_shared_key);
 
-        const plaintext = try self.symmetric_state.decryptAndHash(allocator, message.ciphertext);
+        const plaintext = try self.symmetric_state.decryptAndHash(allocator, msg.ciphertext);
 
         self.symmetric_state.split(cs1, cs2);
 
