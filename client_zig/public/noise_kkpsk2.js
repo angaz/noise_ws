@@ -144,10 +144,16 @@ export class NoiseSession {
     const ciphertextPtr = wasmExports.encryptB(this.ptr);
     const ciphertext = readOutputArray(ciphertextPtr);
     freeOutputArray(ciphertextPtr);
+
+    this.ready = true;
     return ciphertext;
   }
 
   encrypt(plaintext) {
+    if (!this.ready) {
+      throw new Error("Session is not ready to send messages.");
+    }
+
     const [plaintextPtr, plaintextLen] = allocInputArray(plaintext);
     const ciphertextPtr = wasmExports.encrypt(this.ptr, plaintextPtr, plaintextLen);
     free(plaintextPtr, plaintextLen);
@@ -168,9 +174,15 @@ export class NoiseSession {
     const [ciphertextPtr, ciphertextLen] = allocInputArray(ciphertext);
     wasmExports.decryptB(this.ptr, ciphertextPtr, ciphertextLen);
     free(ciphertextPtr, ciphertextLen);
+
+    this.ready = true;
   }
 
   decrypt(ciphertext) {
+    if (!this.ready) {
+      throw new Error("Session is not ready to send messages.");
+    }
+
     const [ciphertextPtr, ciphertextLen] = allocInputArray(ciphertext);
     const plaintextPtr = wasmExports.decrypt(this.ptr, ciphertextPtr, ciphertextLen);
     free(ciphertextPtr, ciphertextLen);
