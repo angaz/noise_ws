@@ -5,6 +5,7 @@ const noise_session = @import("noise_session.zig");
 const NoiseSession = noise_session.NoiseSession;
 
 extern fn throw(ptr: usize, size: usize) void;
+extern fn unixTimestampMilliseconds() i64;
 
 fn throwError(err: []const u8) void {
     throw(@ptrToInt(err.ptr), err.len);
@@ -33,8 +34,7 @@ export fn free(ptr: [*]u8, size: usize) void {
 }
 
 export fn sessionInit(initiator: bool, secret: [*]const u8, secretSize: usize) usize {
-    var prologue = std.mem.zeroes([8]u8);
-    std.mem.writeIntLittle(i64, &prologue, 42);
+    const prologue = [_]u8{ 0, 0, 0, 0, 0, 0, 0, 42 };
 
     var noise = NoiseSession.init(
         wasmAllocator,
@@ -68,7 +68,7 @@ fn exportArray(arr: []const u8) usize {
 }
 
 export fn encryptA(session: *NoiseSession) usize {
-    const out = session.encryptAndEncodeMessageA(wasmAllocator) catch |err| {
+    const out = session.encryptAndEncodeMessageA(wasmAllocator, unixTimestampMilliseconds()) catch |err| {
         switch (err) {
             else => {
                 throwError("encrypt failed");
@@ -107,7 +107,7 @@ export fn encrypt(session: *NoiseSession, plaintext: [*]const u8, plaintextLen: 
 }
 
 export fn decryptA(session: *NoiseSession, ciphertext: [*]const u8, ciphertextLen: usize) void {
-    session.decodeAndDecryptMessageA(wasmAllocator, ciphertext[0..ciphertextLen]) catch |err| {
+    session.decodeAndDecryptMessageA(wasmAllocator, unixTimestampMilliseconds(), ciphertext[0..ciphertextLen]) catch |err| {
         switch (err) {
             else => {
                 throwError("decrypt failed");

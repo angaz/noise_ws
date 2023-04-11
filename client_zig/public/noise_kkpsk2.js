@@ -16,6 +16,7 @@ WebAssembly
       throw: (ptr, size) => {
         throw new Error(decoder.decode(new Uint8Array(wasmMemory.buffer, ptr, size)));
       },
+      unixTimestampMilliseconds: () => BigInt(new Date().getTime()),
     },
   }).then(result => {
     wasmInstance = result.instance;
@@ -104,6 +105,7 @@ export class NoiseSession {
     free(secretPtr);
 
     this.ready = false;
+    this.readyPromise = new Promise();
   }
 
   onMessage(event) {
@@ -123,14 +125,39 @@ export class NoiseSession {
     }
   }
 
-  connect(hostname) {
-    this.websocket = new Websocket(hostname);
-    this.websocket.send(this.encryptA());
-    this.websocket.addEventListener("message", this.onMessage);
+  __fetch(method, message) {
+    return fetch(this.hostname, {
+      method: method,
+      body: message,
+    });
   }
 
-  deinit() {
+  async connect(hostname) {
+    this.hostname = hostname;
+
+    const messageB = await this.__fetch("POST", this.encryptA());
+    this.decryptB(messageB);
+  }
+
+  async fetch(message, isRetry = false) {
+    if (!this.ready) {
+      throw new Error("Session is not ready to send messages.");
+    }
+
+    const resp = await this.__fetch("PUT", message);
+    if (resp.status == 403) {
+      if (!isRetry) {
+        await this.connect();
+        return this.fetch(message, true);
+      }
+      throw new Error("Session is not initialized");
+    }
+    return this.decrypt(await resp.arrayBuffer());
+  }
+
+  async close() {
     wasmExports.sessionDeinit(this.ptr);
+    await this.__fetch("DELETE", encoder.encode("CLOSE"));
   }
 
   encryptA() {

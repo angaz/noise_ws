@@ -1,5 +1,5 @@
 const std = @import("std");
-const Key = @import("key.zig").Key;
+const Key32 = @import("key.zig").Key32;
 const Ciphertext = @import("ciphertext.zig").Ciphertext;
 const Allocator = std.mem.Allocator;
 const ChaCha20Poly1305 = std.crypto.aead.chacha_poly.ChaCha20Poly1305;
@@ -17,13 +17,13 @@ pub const MessageType = enum(u8) {
 
 pub const MessageHandshake = struct {
     message_type: MessageType,
-    ephemeral: Key,
+    ephemeral: Key32,
     ciphertext: Ciphertext,
 
     const Self = @This();
 
     pub fn encode(self: Self, allocator: Allocator) ![]const u8 {
-        var encoded = allocator.alloc(u8, @sizeOf(MessageType) + self.ephemeral.len + self.ciphertext.len());
+        var encoded = try allocator.alloc(u8, @sizeOf(MessageType) + Key32.len + self.ciphertext.len());
         self.writeTo(encoded);
         return encoded;
     }
@@ -31,13 +31,13 @@ pub const MessageHandshake = struct {
     pub fn writeTo(self: Self, out: []u8) void {
         std.mem.writeIntSliceLittle(u8, out, @enumToInt(self.message_type));
         std.mem.copy(u8, out[1..], &self.ephemeral.key);
-        self.ciphertext.writeTo(out[1 + Key.len ..]);
+        self.ciphertext.writeTo(out[1 + Key32.len ..]);
     }
 
     pub fn readFrom(in: []const u8) Self {
         var message_type = @intToEnum(MessageType, std.mem.readIntSliceLittle(u8, in));
-        var ephemeral = Key.copy(in[1..Key.len]);
-        var ciphertext = Ciphertext.readFrom(in[1 + Key.len ..]);
+        var ephemeral = Key32.copy(in[1 .. Key32.len + 1]);
+        var ciphertext = Ciphertext.readFrom(in[1 + Key32.len + 1 ..]);
 
         return .{
             .message_type = message_type,
@@ -76,13 +76,13 @@ pub const MessageData = struct {
 };
 
 pub const MessageDoNotUse = struct {
-    ephemeral: Key,
+    ephemeral: Key32,
     ciphertext: Ciphertext,
 
     const Self = @This();
 
     pub fn init(
-        ephemeral: Key,
+        ephemeral: Key32,
         ciphertext: Ciphertext,
     ) Self {
         return .{
@@ -97,7 +97,7 @@ pub const MessageDoNotUse = struct {
 
     pub fn emptyWithCiphertext(ciphertext: Ciphertext) Self {
         return Self.init(
-            Key.empty(),
+            Key32.empty(),
             ciphertext,
         );
     }
@@ -107,12 +107,12 @@ pub const MessageDoNotUse = struct {
     }
 
     pub fn encodedLength(self: Self) usize {
-        return Key.len + self.ciphertext.len();
+        return Key32.len + self.ciphertext.len();
     }
 
     pub fn writeTo(self: Self, out: []u8) void {
         std.mem.copy(u8, out, &self.ephemeral.key);
-        self.ciphertext.writeTo(out[Key.len..]);
+        self.ciphertext.writeTo(out[Key32.len..]);
     }
 
     pub fn encode(self: Self, allocator: Allocator) ![]const u8 {
@@ -123,8 +123,8 @@ pub const MessageDoNotUse = struct {
 
     pub fn readFrom(in: []const u8) Self {
         return Self.init(
-            Key.copy(in[0..Key.len]),
-            Ciphertext.readFrom(in[Key.len..]),
+            Key32.copy(in[0..Key32.len]),
+            Ciphertext.readFrom(in[Key32.len..]),
         );
     }
 

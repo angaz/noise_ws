@@ -70,13 +70,11 @@ pub const NoiseSession = struct {
         allocator.destroy(self);
     }
 
-    pub fn encryptAndEncodeMessageA(self: *Self, allocator: Allocator) ![]const u8 {
-        const timestamp = std.time.milliTimestamp();
-        var plaintext = try allocator.alloc(u8, @sizeOf(@TypeOf(timestamp)));
-        defer allocator.free(plaintext);
-        std.mem.writeIntSliceLittle(i64, plaintext, timestamp);
+    pub fn encryptAndEncodeMessageA(self: *Self, allocator: Allocator, timestamp: i64) ![]const u8 {
+        var plaintext = std.mem.zeroes([@sizeOf(@TypeOf(timestamp))]u8);
+        std.mem.writeIntSliceLittle(i64, &plaintext, timestamp);
 
-        const ciphertext = try self.handshake.encryptMessageA(allocator, plaintext);
+        const ciphertext = try self.handshake.encryptMessageA(allocator, &plaintext);
         defer ciphertext.deinit(allocator);
 
         const msg = message.MessageHandshake{
@@ -91,7 +89,7 @@ pub const NoiseSession = struct {
         const plaintext = std.mem.zeroes([16]u8);
         const ciphertext = try self.handshake.encryptMessageB(
             allocator,
-            plaintext,
+            &plaintext,
             &self.cipher_state_local,
             &self.cipher_state_remote,
         );
@@ -119,16 +117,14 @@ pub const NoiseSession = struct {
         return try msg.encode(allocator);
     }
 
-    pub fn decodeAndDecryptMessageA(self: *Self, allocator: Allocator, ciphertext: []const u8) !void {
-        const timestamp = std.time.milliTimestamp();
-
+    pub fn decodeAndDecryptMessageA(self: *Self, allocator: Allocator, timestamp: i64, ciphertext: []const u8) !void {
         const msg = message.MessageHandshake.readFrom(ciphertext);
         const plaintext = try self.handshake.decryptMessageA(allocator, msg);
         defer allocator.free(plaintext);
 
         const msg_timestamp = std.mem.readIntSliceLittle(i64, plaintext);
 
-        if (std.math.absInt(msg_timestamp - timestamp) > 2000) {
+        if (try std.math.absInt(msg_timestamp - timestamp) > 2000) {
             return error.TooOld;
         }
     }
