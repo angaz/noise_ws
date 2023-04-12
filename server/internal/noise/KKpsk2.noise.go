@@ -195,6 +195,21 @@ func (m MessageHandshake) Encode() []byte {
 	)
 }
 
+func MessageHandshakeDecode(b []byte) (MessageHandshake, error) {
+	if len(b) < 33 {
+		return MessageHandshake{}, errors.New("invalid message length")
+	}
+
+	m := MessageHandshake{
+		MessageType: MessageType(b[0]),
+		Ciphertext:  b[33:],
+	}
+
+	copy(m.Ephemeral[:], b[1:33])
+
+	return m, nil
+}
+
 type MessageData struct {
 	MessageType MessageType
 	Ciphertext  []byte
@@ -205,6 +220,17 @@ func (m MessageData) Encode() []byte {
 		[]byte{byte(m.MessageType)},
 		m.Ciphertext...,
 	)
+}
+
+func MessageDataDecode(b []byte) (MessageData, error) {
+	if len(b) < 2 {
+		return MessageData{}, errors.New("invalid message length")
+	}
+
+	return MessageData{
+		MessageType: MessageType(b[0]),
+		Ciphertext:  b[1:],
+	}, nil
 }
 
 type cipherstate struct {
@@ -325,22 +351,31 @@ func generatePublicKey(privateKey [32]byte) [32]byte {
 	return publicKey
 }
 
-func encrypt(k [32]byte, n uint64, ad []byte, plaintext []byte) []byte {
+func encrypt(k [32]byte, n uint64, ad []byte, plaintext []byte) ([]byte, error) {
+	enc, err := chacha20poly1305.New(k[:])
+	if err != nil {
+		return []byte{}, fmt.Errorf("error initializing encryption: %w", err)
+	}
+
 	var nonce [12]byte
-	var ciphertext []byte
-	enc, _ := chacha20poly1305.New(k[:])
 	binary.LittleEndian.PutUint64(nonce[4:], n)
-	ciphertext = enc.Seal(nil, nonce[:], plaintext, ad)
-	return ciphertext
+	return enc.Seal(nil, nonce[:], plaintext, ad)
 }
 
-func decrypt(k [32]byte, n uint64, ad []byte, ciphertext []byte) (bool, []byte, []byte) {
-	var nonce [12]byte
-	var plaintext []byte
+func decrypt(k [32]byte, n uint64, ad []byte, ciphertext []byte) ([]byte, error) {
 	enc, err := chacha20poly1305.New(k[:])
+	if err != nil {
+		return []byte{}, fmt.Errorf("error initalizing encryption: %w", err)
+	}
+
+	var nonce [12]byte
 	binary.LittleEndian.PutUint64(nonce[4:], n)
-	plaintext, err = enc.Open(nil, nonce[:], ciphertext, ad)
-	return (err == nil), ad, plaintext
+	plaintext, err := enc.Open(nil, nonce[:], ciphertext, ad)
+	if err != nil {
+		return []byte{}, fmt.Errorf("error decrypting payload: %w", err)
+	}
+
+	return plaintext, nil
 }
 
 func getHash(a []byte, b []byte) [32]byte {
@@ -382,42 +417,45 @@ func initializeKey(k [32]byte) cipherstate {
 	return cipherstate{k, minNonce}
 }
 
-func hasKey(cs *cipherstate) bool {
+func (cs *cipherstate) hasKey() bool {
 	return !isEmptyKey(cs.k)
 }
 
-func setNonce(cs *cipherstate, newNonce uint64) *cipherstate {
-	cs.n = newNonce
-	return cs
-}
-
-func encryptWithAd(cs *cipherstate, ad []byte, plaintext []byte) (*cipherstate, []byte, error) {
-	var err error
+func (cs *cipherstate) encryptWithAd(ad []byte, plaintext []byte) ([]byte, error) {
 	if cs.n == math.MaxUint64-1 {
-		err = errors.New("encryptWithAd: maximum nonce size reached")
-		return cs, []byte{}, err
+		return []byte{}, errors.New("encryptWithAd: maximum nonce size reached")
 	}
-	e := encrypt(cs.k, cs.n, ad, plaintext)
-	cs = setNonce(cs, incrementNonce(cs.n))
-	return cs, e, err
+
+	ciphertext, err := encrypt(cs.k, cs.n, ad, plaintext)
+	cs.n += 1
+
+	if err != nil {
+		return []byte{}, fmt.Errorf("error encrypting with AD: %w", err)
+	}
+
+	return ciphertext, nil
 }
 
-func decryptWithAd(cs *cipherstate, ad []byte, ciphertext []byte) (*cipherstate, []byte, bool, error) {
-	var err error
+func (cs *cipherstate) decryptWithAd(ad []byte, ciphertext []byte) ([]byte, error) {
 	if cs.n == math.MaxUint64-1 {
-		err = errors.New("decryptWithAd: maximum nonce size reached")
-		return cs, []byte{}, false, err
+		return []byte{}, errors.New("decryptWithAd: maximum nonce size reached")
 	}
-	valid, ad, plaintext := decrypt(cs.k, cs.n, ad, ciphertext)
-	cs = setNonce(cs, incrementNonce(cs.n))
-	return cs, plaintext, valid, err
+
+	plaintext, err := decrypt(cs.k, cs.n, ad, ciphertext)
+	cs.n += 1
+
+	if err != nil {
+		return []byte{}, fmt.Errorf("error decrypting with AD: %w", err)
+	}
+
+	return plaintext, nil
 }
 
-func reKey(cs *cipherstate) *cipherstate {
-	e := encrypt(cs.k, math.MaxUint64, []byte{}, emptyKey[:])
-	copy(cs.k[:], e)
-	return cs
-}
+// func reKey(cs *cipherstate) *cipherstate {
+// 	e := encrypt(cs.k, math.MaxUint64, []byte{}, emptyKey[:])
+// 	copy(cs.k[:], e)
+// 	return cs
+// }
 
 /* SymmetricState */
 
@@ -428,63 +466,60 @@ func initializeSymmetric(protocolName []byte) symmetricstate {
 	return symmetricstate{cs, ck, h}
 }
 
-func mixKey(ss *symmetricstate, ikm [32]byte) *symmetricstate {
+func (ss *symmetricstate) mixKey(ikm [32]byte) {
 	ck, tempK, _ := getHkdf(ss.ck, ikm[:])
 	ss.cs = initializeKey(tempK)
 	ss.ck = ck
-	return ss
 }
 
-func mixHash(ss *symmetricstate, data []byte) *symmetricstate {
+func (ss *symmetricstate) mixHash(data []byte) {
 	ss.h = getHash(ss.h[:], data)
-	return ss
 }
 
-func mixKeyAndHash(ss *symmetricstate, ikm [32]byte) *symmetricstate {
+func (ss *symmetricstate) mixKeyAndHash(ikm [32]byte) {
 	var tempH [32]byte
 	var tempK [32]byte
+
 	ss.ck, tempH, tempK = getHkdf(ss.ck, ikm[:])
-	ss = mixHash(ss, tempH[:])
+	ss.mixHash(tempH[:])
 	ss.cs = initializeKey(tempK)
-	return ss
 }
 
-func getHandshakeHash(ss *symmetricstate) [32]byte {
-	return ss.h
-}
-
-func encryptAndHash(ss *symmetricstate, plaintext []byte) (*symmetricstate, []byte, error) {
+func (ss *symmetricstate) encryptAndHash(plaintext []byte) ([]byte, error) {
 	var ciphertext []byte
 	var err error
-	if hasKey(&ss.cs) {
-		_, ciphertext, err = encryptWithAd(&ss.cs, ss.h[:], plaintext)
+
+	if ss.cs.hasKey() {
+		ciphertext, err = ss.cs.encryptWithAd(ss.h[:], plaintext)
 		if err != nil {
-			return ss, []byte{}, err
+			return []byte{}, err
 		}
 	} else {
 		ciphertext = plaintext
 	}
-	ss = mixHash(ss, ciphertext)
-	return ss, ciphertext, err
+
+	ss.mixHash(ciphertext)
+	return ciphertext, err
 }
 
-func decryptAndHash(ss *symmetricstate, ciphertext []byte) (*symmetricstate, []byte, bool, error) {
+func (ss *symmetricstate) decryptAndHash(ciphertext []byte) ([]byte, error) {
 	var plaintext []byte
-	var valid bool
 	var err error
-	if hasKey(&ss.cs) {
-		_, plaintext, valid, err = decryptWithAd(&ss.cs, ss.h[:], ciphertext)
+
+	if ss.cs.hasKey() {
+		plaintext, err = ss.cs.decryptWithAd(ss.h[:], ciphertext)
 		if err != nil {
-			return ss, []byte{}, false, err
+			return []byte{}, err
 		}
 	} else {
-		plaintext, valid = ciphertext, true
+		plaintext = ciphertext
 	}
-	ss = mixHash(ss, ciphertext)
-	return ss, plaintext, valid, err
+
+	ss.mixHash(ciphertext)
+	return plaintext, nil
 }
 
-func split(ss *symmetricstate) (cipherstate, cipherstate) {
+func (ss *symmetricstate) split() (cipherstate, cipherstate) {
 	tempK1, tempK2, _ := getHkdf(ss.ck, []byte{})
 	cs1 := initializeKey(tempK1)
 	cs2 := initializeKey(tempK2)
@@ -494,14 +529,15 @@ func split(ss *symmetricstate) (cipherstate, cipherstate) {
 /* HandshakeState */
 
 func initializeInitiator(prologue []byte, s Keypair, rs [32]byte, psk [32]byte) handshakestate {
-	var ss symmetricstate
 	var e Keypair
 	var re [32]byte
+
 	name := []byte("Noise_KKpsk2_25519_ChaChaPoly_BLAKE2s")
-	ss = initializeSymmetric(name)
-	mixHash(&ss, prologue)
-	mixHash(&ss, s.Public[:])
-	mixHash(&ss, rs[:])
+	ss := initializeSymmetric(name)
+	ss.mixHash(prologue)
+	ss.mixHash(s.Public[:])
+	ss.mixHash(rs[:])
+
 	return handshakestate{ss, s, e, rs, re, psk}
 }
 
@@ -511,103 +547,89 @@ func initializeResponder(prologue []byte, s Keypair, rs [32]byte, psk [32]byte) 
 	var re [32]byte
 	name := []byte("Noise_KKpsk2_25519_ChaChaPoly_BLAKE2s")
 	ss = initializeSymmetric(name)
-	mixHash(&ss, prologue)
-	mixHash(&ss, rs[:])
-	mixHash(&ss, s.Public[:])
+	ss.mixHash(prologue)
+	ss.mixHash(rs[:])
+	ss.mixHash(s.Public[:])
 	return handshakestate{ss, s, e, rs, re, psk}
 }
 
-func writeMessageA(hs *handshakestate, payload []byte) (MessageBuffer, error) {
-	var err error
-	var messageBuffer MessageBuffer
-	ne, ciphertext := emptyKey, []byte{}
-
+func (hs *handshakestate) writeMessageA(payload []byte) (MessageHandshake, error) {
 	hs.e = GenerateKeypair()
-	ne = hs.e.Public
-	mixHash(&hs.ss, ne[:])
-	mixKey(&hs.ss, hs.e.Public)
-	mixKey(&hs.ss, dh(hs.e.Private, hs.rs))
-	mixKey(&hs.ss, dh(hs.s.Private, hs.rs))
-	_, ciphertext, err = encryptAndHash(&hs.ss, payload)
+
+	hs.ss.mixHash(hs.e.Public[:])
+	hs.ss.mixKey(hs.e.Public)
+	hs.ss.mixKey(dh(hs.e.Private, hs.rs))
+	hs.ss.mixKey(dh(hs.s.Private, hs.rs))
+
+	ciphertext, err := hs.ss.encryptAndHash(payload)
 	if err != nil {
-		return messageBuffer, err
+		return MessageHandshake{}, err
 	}
 
-	messageBuffer = MessageBuffer{
+	return MessageHandshake{
 		MessageType: MessageTypeHandshakeInitiation,
-		Ephemeral:   ne,
+		Ephemeral:   hs.e.Public,
 		Ciphertext:  ciphertext,
-	}
-	return messageBuffer, err
+	}, nil
 }
 
-func writeMessageB(hs *handshakestate, payload []byte) (MessageHandshake, cipherstate, cipherstate, error) {
-	var err error
-	ne, ciphertext := emptyKey, []byte{}
-
+func (hs *handshakestate) writeMessageB(payload []byte) ([32]byte, MessageHandshake, cipherstate, cipherstate, error) {
 	hs.e = GenerateKeypair()
-	ne = hs.e.Public
-	mixHash(&hs.ss, ne[:])
-	mixKey(&hs.ss, hs.e.Public)
-	mixKey(&hs.ss, dh(hs.e.Private, hs.re))
-	mixKey(&hs.ss, dh(hs.e.Private, hs.rs))
-	mixKeyAndHash(&hs.ss, hs.psk)
-	_, ciphertext, err = encryptAndHash(&hs.ss, payload)
+
+	hs.ss.mixHash(hs.e.Public[:])
+	hs.ss.mixKey(hs.e.Public)
+	hs.ss.mixKey(dh(hs.e.Private, hs.re))
+	hs.ss.mixKey(dh(hs.e.Private, hs.rs))
+	hs.ss.mixKeyAndHash(hs.psk)
+
+	ciphertext, err := hs.ss.encryptAndHash(payload)
 	if err != nil {
-		cs1, cs2 := split(&hs.ss)
-		return MessageHandshake{}, cs1, cs2, err
+		cs1, cs2 := hs.ss.split()
+		return emptyKey, MessageHandshake{}, cs1, cs2, err
 	}
 
 	messageBuffer := MessageHandshake{
 		MessageType: MessageTypeHandshakeResponse,
-		Ephemeral:   ne,
+		Ephemeral:   hs.e.Public,
 		Ciphertext:  ciphertext,
 	}
-	cs1, cs2 := split(&hs.ss)
-	return messageBuffer, cs1, cs2, err
+
+	cs1, cs2 := hs.ss.split()
+	return hs.ss.h, messageBuffer, cs1, cs2, err
 }
 
-func readMessageA(hs *handshakestate, message *MessageBuffer) (*handshakestate, []byte, bool, error) {
-	var err error
-	var plaintext []byte
-	var valid2 bool = false
-	var valid1 bool = true
-	if validatePublicKey(message.ne) {
-		hs.re = message.ne
+func (hs *handshakestate) readMessageA(message *MessageHandshake) ([]byte, error) {
+	if validatePublicKey(message.Ephemeral) {
+		hs.re = message.Ephemeral
 	}
-	mixHash(&hs.ss, hs.re[:])
-	mixKey(&hs.ss, hs.re)
-	mixKey(&hs.ss, dh(hs.s.Private, hs.re))
-	mixKey(&hs.ss, dh(hs.s.Private, hs.rs))
-	_, plaintext, valid2, err = decryptAndHash(&hs.ss, message.ciphertext)
-	return hs, plaintext, (valid1 && valid2), err
+	hs.ss.mixHash(hs.re[:])
+	hs.ss.mixKey(hs.re)
+	hs.ss.mixKey(dh(hs.s.Private, hs.re))
+	hs.ss.mixKey(dh(hs.s.Private, hs.rs))
+
+	return hs.ss.decryptAndHash(message.Ciphertext)
 }
 
-func readMessageB(hs *handshakestate, message *MessageBuffer) ([32]byte, []byte, bool, cipherstate, cipherstate, error) {
-	var err error
-	var plaintext []byte
-	var valid2 bool = false
-	var valid1 bool = true
-	if validatePublicKey(message.ne) {
-		hs.re = message.ne
+func (hs *handshakestate) readMessageB(message *MessageHandshake) ([32]byte, []byte, cipherstate, cipherstate, error) {
+	if validatePublicKey(message.Ephemeral) {
+		hs.re = message.Ephemeral
 	}
-	mixHash(&hs.ss, hs.re[:])
-	mixKey(&hs.ss, hs.re)
-	mixKey(&hs.ss, dh(hs.e.Private, hs.re))
-	mixKey(&hs.ss, dh(hs.s.Private, hs.re))
-	mixKeyAndHash(&hs.ss, hs.psk)
-	_, plaintext, valid2, err = decryptAndHash(&hs.ss, message.ciphertext)
-	cs1, cs2 := split(&hs.ss)
-	return hs.ss.h, plaintext, (valid1 && valid2), cs1, cs2, err
+	hs.ss.mixHash(hs.re[:])
+	hs.ss.mixKey(hs.re)
+	hs.ss.mixKey(dh(hs.e.Private, hs.re))
+	hs.ss.mixKey(dh(hs.s.Private, hs.re))
+	hs.ss.mixKeyAndHash(hs.psk)
+
+	plaintext, err := hs.ss.decryptAndHash(message.Ciphertext)
+	cs1, cs2 := hs.ss.split()
+	return hs.ss.h, plaintext, cs1, cs2, err
 }
 
-func readMessageRegular(cs *cipherstate, message *MessageBuffer) (*cipherstate, []byte, bool, error) {
-	var err error
-	var plaintext []byte
-	var valid2 bool = false
-	/* No encrypted keys */
-	_, plaintext, valid2, err = decryptWithAd(cs, []byte{}, message.ciphertext)
-	return cs, plaintext, valid2, err
+func (cs *cipherstate) readMessageRegular(ciphertext []byte) ([]byte, error) {
+	return cs.decryptWithAd([]byte{}, ciphertext)
+}
+func (cs *cipherstate) writeMessageRegular(plaintext []byte) ([]byte, error) {
+	return cs.encryptWithAd([]byte{}, plaintext)
 }
 
 /* ---------------------------------------------------------------- *
@@ -627,50 +649,41 @@ func InitSession(initiator bool, prologue []byte, secret Secret) NoiseSession {
 	return session
 }
 
-func (s *NoiseSession) DecryptA(message *MessageBuffer) ([]byte, bool, error) {
-	_, plaintext, valid, err := readMessageA(&s.hs, message)
-	return plaintext, valid, err
+func (s *NoiseSession) DecryptA(message *MessageHandshake) ([]byte, error) {
+	return s.hs.readMessageA(message)
 }
 
-func (s *NoiseSession) DecryptB(message *MessageBuffer) ([]byte, bool, error) {
+func (s *NoiseSession) DecryptB(message *MessageHandshake) ([]byte, error) {
 	var err error
 	var plaintext []byte
-	var valid bool
 
-	s.h, plaintext, valid, s.cs1, s.cs2, err = readMessageB(&s.hs, message)
+	s.h, plaintext, s.cs1, s.cs2, err = s.hs.readMessageB(message)
 	s.hs = handshakestate{}
 
-	return plaintext, valid, err
+	return plaintext, err
 }
 
-func (s *NoiseSession) Decrypt(message *MessageBuffer) ([]byte, bool, error) {
-	var err error
-	var plaintext []byte
-	var valid bool
-
+func (s *NoiseSession) Decrypt(message *MessageData) ([]byte, error) {
 	if s.i {
-		_, plaintext, valid, err = readMessageRegular(&s.cs2, message)
+		return s.cs2.readMessageRegular(message.Ciphertext)
 	} else {
-		_, plaintext, valid, err = readMessageRegular(&s.cs1, message)
+		return s.cs1.readMessageRegular(message.Ciphertext)
 	}
-
-	return plaintext, valid, err
 }
 
-func (s *NoiseSession) EncryptA() (MessageBuffer, error) {
+func (s *NoiseSession) EncryptA() (MessageHandshake, error) {
 	timestamp := time.Now().UnixMilli()
 	payload := make([]byte, 8)
 	binary.LittleEndian.PutUint64(payload, uint64(timestamp))
 
-	_, message, err := writeMessageA(&s.hs, payload)
-	return message, err
+	return s.hs.writeMessageA(payload)
 }
 
-func (s *NoiseSession) EncryptB() (MessageBuffer, error) {
-	var messageBuffer MessageBuffer
+func (s *NoiseSession) EncryptB() (MessageHandshake, error) {
+	var messageBuffer MessageHandshake
 	var err error
 
-	s.h, messageBuffer, s.cs1, s.cs2, err = writeMessageB(&s.hs, []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0})
+	s.h, messageBuffer, s.cs1, s.cs2, err = s.hs.writeMessageB([]byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0})
 	s.hs = handshakestate{}
 
 	return messageBuffer, err
@@ -678,8 +691,7 @@ func (s *NoiseSession) EncryptB() (MessageBuffer, error) {
 
 func (s *NoiseSession) Encrypt(plaintext []byte) (MessageBuffer, error) {
 	if s.i {
-		_, messageBuffer, err := writeMessageRegular(&s.cs1, plaintext)
-		return messageBuffer, err
+		return s.cs1.writeMessageRegular(plaintext)
 	} else {
 		_, messageBuffer, err := writeMessageRegular(&s.cs2, plaintext)
 		return messageBuffer, err

@@ -1,6 +1,5 @@
 package main
 
-// import "github.com/SN9NV/noise_ws/server/internal/noise"
 import (
 	"context"
 	"errors"
@@ -38,14 +37,25 @@ func (s *server) handleConnect(w http.ResponseWriter, r *http.Request) {
 	prologue := []byte{0, 0, 0, 0, 0, 0, 0, 42}
 	session := noise.InitSession(false, prologue, s.secret)
 
-	messageA, err := io.ReadAll(r.Body)
+	ciphertext, err := io.ReadAll(r.Body)
 	if err != nil {
-		log.Printf("handle connect error reading body: %s", err)
+		log.Printf("handle connect error reading body: %s\n", err)
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 
-	session.dec
+	if ciphertext[0] != byte(noise.MessageTypeHandshakeInitiation) {
+		log.Println("handle connect error first message is not handshake initiation")
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	messageA, err := noise.MessageHandshakeDecode(ciphertext)
+	if err != nil {
+		log.Printf("handle connect error: %s\n", err)
+	}
+
+	plaintext, valid, err := session.DecryptA(messageA)
 
 }
 
