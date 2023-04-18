@@ -177,6 +177,7 @@ const (
 	MessageTypeHandshakeInitiation MessageType = 1
 	MessageTypeHandshakeResponse   MessageType = 2
 	MessageTypeData                MessageType = 3
+	MessageTypeClose               MessageType = 4
 )
 
 type MessageHandshake struct {
@@ -649,7 +650,7 @@ func InitSession(initiator bool, prologue []byte, secret Secret) NoiseSession {
 	return session
 }
 
-func (s *NoiseSession) DecryptA(message *MessageHandshake) ([]byte, error) {
+func (s *NoiseSession) DecryptA(message MessageHandshake) ([]byte, error) {
 	return s.hs.readMessageA(message)
 }
 
@@ -689,49 +690,10 @@ func (s *NoiseSession) EncryptB() (MessageHandshake, error) {
 	return messageBuffer, err
 }
 
-func (s *NoiseSession) Encrypt(plaintext []byte) (MessageBuffer, error) {
+func (s *NoiseSession) Encrypt(plaintext []byte) ([]byte, error) {
 	if s.i {
 		return s.cs1.writeMessageRegular(plaintext)
 	} else {
-		_, messageBuffer, err := writeMessageRegular(&s.cs2, plaintext)
-		return messageBuffer, err
+		return s.cs2.writeMessageRegular(plaintext)
 	}
-}
-
-func SendMessage(session *NoiseSession, message []byte) (*NoiseSession, MessageBuffer, error) {
-	var err error
-	var messageBuffer MessageBuffer
-	if session.mc == 0 {
-		_, messageBuffer, err = writeMessageA(&session.hs, message)
-	}
-	if session.mc == 1 {
-		session.h, messageBuffer, session.cs1, session.cs2, err = writeMessageB(&session.hs, message)
-		session.hs = handshakestate{}
-	}
-	if session.mc > 1 {
-		if session.i {
-			_, messageBuffer, err = writeMessageRegular(&session.cs1, message)
-		} else {
-			_, messageBuffer, err = writeMessageRegular(&session.cs2, message)
-		}
-	}
-	session.mc = session.mc + 1
-	return session, messageBuffer, err
-}
-
-func RecvMessage(session *NoiseSession, message *MessageBuffer) (*NoiseSession, []byte, bool, error) {
-	var err error
-	var plaintext []byte
-	var valid bool
-	if session.mc == 0 {
-		_, plaintext, valid, err = readMessageA(&session.hs, message)
-	}
-	if session.mc == 1 {
-		session.h, plaintext, valid, session.cs1, session.cs2, err = readMessageB(&session.hs, message)
-		session.hs = handshakestate{}
-	}
-	if session.mc > 1 {
-	}
-	session.mc = session.mc + 1
-	return session, plaintext, valid, err
 }

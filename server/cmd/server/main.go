@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"io"
 	"log"
@@ -33,10 +34,61 @@ func runServer(server *http.Server) {
 	}
 }
 
-func (s *server) handleConnect(w http.ResponseWriter, r *http.Request) {
+func (s *server) handleHandshakeInit(w http.ResponseWriter, r *http.Request, ciphertext []byte) {
 	prologue := []byte{0, 0, 0, 0, 0, 0, 0, 42}
 	session := noise.InitSession(false, prologue, s.secret)
 
+	messageA, err := noise.MessageHandshakeDecode(ciphertext)
+	if err != nil {
+		log.Printf("handle connect error: %s\n", err)
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	plaintext, err := session.DecryptA(messageA)
+	if err != nil {
+		log.Printf("decryptA error: %s\n", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	if len(plaintext) != 8 {
+		log.Println("invalid handshake message length")
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	unixMilli := binary.LittleEndian.Uint64(plaintext)
+	timestamp := time.UnixMilli(int64(unixMilli))
+
+	if time.Since(timestamp) > 2*time.Second {
+		log.Println("invalid handshake timestamp too old")
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	messageB, err := session.EncryptB()
+	if err != nil {
+		log.Printf("encrypting message B failed: %s\n", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	_, err = w.Write(messageB.Encode())
+	if err != nil {
+		log.Printf("error writing handshake response: %s\n", err)
+	}
+}
+
+func (s *server) handleHandshakeResponse(w http.ResponseWriter, r *http.Request, ciphertext []byte) {
+}
+func (s *server) handleMessageData(w http.ResponseWriter, r *http.Request, ciphertext []byte) {
+}
+func (s *server) handleMessageClose(w http.ResponseWriter, r *http.Request, ciphertext []byte) {
+}
+
+func (s *server) hander(w http.ResponseWriter, r *http.Request) {
 	ciphertext, err := io.ReadAll(r.Body)
 	if err != nil {
 		log.Printf("handle connect error reading body: %s\n", err)
@@ -44,29 +96,17 @@ func (s *server) handleConnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if ciphertext[0] != byte(noise.MessageTypeHandshakeInitiation) {
-		log.Println("handle connect error first message is not handshake initiation")
+	switch noise.MessageType(ciphertext[0]) {
+	case noise.MessageTypeHandshakeInitiation:
+		s.handleHandshakeInit(w, r, ciphertext)
+	case noise.MessageTypeHandshakeResponse:
+		s.handleHandshakeResponse(w, r, ciphertext)
+	case noise.MessageTypeData:
+		s.handleMessageData(w, r, ciphertext)
+	case noise.MessageTypeClose:
+		s.handleMessageClose(w, r, ciphertext)
+	default:
 		w.WriteHeader(http.StatusBadRequest)
-		return
-	}
-
-	messageA, err := noise.MessageHandshakeDecode(ciphertext)
-	if err != nil {
-		log.Printf("handle connect error: %s\n", err)
-	}
-
-	plaintext, valid, err := session.DecryptA(messageA)
-
-}
-
-func (s *server) hander(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodPost:
-		s.handleConnect(w, r)
-	case http.MethodPut:
-		s.handleMessage(w, r)
-	case http.MethodDelete:
-		s.handleClose(w, r)
 	}
 }
 
