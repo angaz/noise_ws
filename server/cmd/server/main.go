@@ -3,12 +3,15 @@ package main
 import (
 	"context"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"io"
 	"log"
+	"math/rand"
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -16,13 +19,33 @@ import (
 )
 
 type serverNoiseSession struct {
-	session     noise.NoiseSession
-	lastMessage time.Time
+	session          noise.NoiseSession
+	lastMessage      time.Time
+	sessionStartTime time.Time
+	localIndex       uint32
+	remoteIndex      uint32
 }
 
 type server struct {
-	secret   noise.Secret
-	sessions map[string]serverNoiseSession
+	secret    noise.Secret
+	indexMap  map[uint32]*serverNoiseSession
+	keyMap    map[[32]byte]*serverNoiseSession
+	indexLock sync.Mutex
+}
+
+func (s *server) generateRandomIndex(session *serverNoiseSession) uint32 {
+	s.indexLock.Lock()
+	defer s.indexLock.Unlock()
+
+	for {
+		i := rand.Uint32()
+		_, found := s.indexMap[i]
+
+		if !found {
+			s.indexMap[i] = session
+			return i
+		}
+	}
 }
 
 func runServer(server *http.Server) {
@@ -38,7 +61,7 @@ func (s *server) handleHandshakeInit(w http.ResponseWriter, r *http.Request, cip
 	prologue := []byte{0, 0, 0, 0, 0, 0, 0, 42}
 	session := noise.InitSession(false, prologue, s.secret)
 
-	messageA, err := noise.MessageHandshakeDecode(ciphertext)
+	messageA, err := noise.MessageHandshakeInitiationDecode(ciphertext)
 	if err != nil {
 		log.Printf("handle connect error: %s\n", err)
 		w.WriteHeader(http.StatusBadRequest)
@@ -73,6 +96,22 @@ func (s *server) handleHandshakeInit(w http.ResponseWriter, r *http.Request, cip
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
+
+	messageB.ReceiverIndex = messageA.SenderIndex
+
+	serverSession := serverNoiseSession{
+		session:          session,
+		lastMessage:      timestamp,
+		sessionStartTime: timestamp,
+		remoteIndex:      messageA.SenderIndex,
+	}
+
+	localIndex := s.generateRandomIndex(&serverSession)
+
+	s.keyMap[messageA.Ephemeral] = &serverSession
+
+	serverSession.localIndex = localIndex
+	messageB.SenderIndex = localIndex
 
 	w.WriteHeader(http.StatusOK)
 	_, err = w.Write(messageB.Encode())

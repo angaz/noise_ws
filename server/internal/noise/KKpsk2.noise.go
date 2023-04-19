@@ -180,57 +180,120 @@ const (
 	MessageTypeClose               MessageType = 4
 )
 
-type MessageHandshake struct {
+type MessageHandshakeInitiation struct {
 	MessageType MessageType
+	SenderIndex uint32
 	Ephemeral   [32]byte
 	Ciphertext  []byte
 }
 
-func (m MessageHandshake) Encode() []byte {
-	return append(
-		append(
-			[]byte{byte(m.MessageType)},
-			m.Ephemeral[:]...,
-		),
-		m.Ciphertext...,
+func (m MessageHandshakeInitiation) Encode() []byte {
+	out := make([]byte,
+		0,
+		1+ // MessageType
+			4+ // SenderIndex
+			32+ // Ephemeral
+			len(m.Ciphertext),
 	)
+
+	out = append(out, byte(m.MessageType))
+	out = binary.LittleEndian.AppendUint32(out, m.SenderIndex)
+	out = append(out, m.Ephemeral[:]...)
+	out = append(out, m.Ciphertext...)
+
+	return out
 }
 
-func MessageHandshakeDecode(b []byte) (MessageHandshake, error) {
-	if len(b) < 33 {
-		return MessageHandshake{}, errors.New("invalid message length")
+func MessageHandshakeInitiationDecode(b []byte) (MessageHandshakeInitiation, error) {
+	if len(b) < 37 { // "header" part of the message buffer (Excluding the Ciphertext)
+		return MessageHandshakeInitiation{}, errors.New("invalid message length")
 	}
 
-	m := MessageHandshake{
+	m := MessageHandshakeInitiation{
 		MessageType: MessageType(b[0]),
-		Ciphertext:  b[33:],
+		SenderIndex: binary.LittleEndian.Uint32(b[1:5]),
+		Ciphertext:  b[37:],
 	}
 
-	copy(m.Ephemeral[:], b[1:33])
+	copy(m.Ephemeral[:], b[5:37])
+
+	return m, nil
+}
+
+type MessageHandshakeResponse struct {
+	MessageType   MessageType
+	SenderIndex   uint32
+	ReceiverIndex uint32
+	Ephemeral     [32]byte
+	Ciphertext    []byte
+}
+
+func (m MessageHandshakeResponse) Encode() []byte {
+	out := make([]byte,
+		0,
+		1+ // MessageType
+			4+ // SenderIndex
+			4+ // RecieverIndex
+			32+ // Ephemeral
+			len(m.Ciphertext),
+	)
+
+	out = append(out, byte(m.MessageType))
+	out = binary.LittleEndian.AppendUint32(out, m.SenderIndex)
+	out = binary.LittleEndian.AppendUint32(out, m.ReceiverIndex)
+	out = append(out, m.Ephemeral[:]...)
+	out = append(out, m.Ciphertext...)
+
+	return out
+}
+
+func MessageHandshakeResponseDecode(b []byte) (MessageHandshakeResponse, error) {
+	if len(b) < 41 { // "header" part of the message buffer (Excluding the Ciphertext)
+		return MessageHandshakeResponse{}, errors.New("invalid message length")
+	}
+
+	m := MessageHandshakeResponse{
+		MessageType:   MessageType(b[0]),
+		SenderIndex:   binary.LittleEndian.Uint32(b[1:5]),
+		ReceiverIndex: binary.LittleEndian.Uint32(b[5:11]),
+		Ciphertext:    b[41:],
+	}
+
+	copy(m.Ephemeral[:], b[11:41])
 
 	return m, nil
 }
 
 type MessageData struct {
-	MessageType MessageType
-	Ciphertext  []byte
+	MessageType   MessageType
+	ReceiverIndex uint32
+	Ciphertext    []byte
 }
 
 func (m MessageData) Encode() []byte {
-	return append(
-		[]byte{byte(m.MessageType)},
-		m.Ciphertext...,
+	out := make([]byte,
+		0,
+		1+ // MessageType
+			4+ // RecieverIndex
+			len(m.Ciphertext),
 	)
+
+	out = append(out, byte(m.MessageType))
+	out = binary.LittleEndian.AppendUint32(out, m.ReceiverIndex)
+	out = append(out, m.Ciphertext...)
+
+	return out
 }
 
 func MessageDataDecode(b []byte) (MessageData, error) {
-	if len(b) < 2 {
+	if len(b) < 5 {
 		return MessageData{}, errors.New("invalid message length")
 	}
 
 	return MessageData{
-		MessageType: MessageType(b[0]),
-		Ciphertext:  b[1:],
+		MessageType:   MessageType(b[0]),
+		ReceiverIndex: binary.LittleEndian.Uint32(b[1:5]),
+		Ciphertext:    b[5:],
 	}, nil
 }
 
@@ -554,7 +617,7 @@ func initializeResponder(prologue []byte, s Keypair, rs [32]byte, psk [32]byte) 
 	return handshakestate{ss, s, e, rs, re, psk}
 }
 
-func (hs *handshakestate) writeMessageA(payload []byte) (MessageHandshake, error) {
+func (hs *handshakestate) writeMessageA(payload []byte) (MessageHandshakeInitiation, error) {
 	hs.e = GenerateKeypair()
 
 	hs.ss.mixHash(hs.e.Public[:])
@@ -564,17 +627,17 @@ func (hs *handshakestate) writeMessageA(payload []byte) (MessageHandshake, error
 
 	ciphertext, err := hs.ss.encryptAndHash(payload)
 	if err != nil {
-		return MessageHandshake{}, err
+		return MessageHandshakeInitiation{}, err
 	}
 
-	return MessageHandshake{
+	return MessageHandshakeInitiation{
 		MessageType: MessageTypeHandshakeInitiation,
 		Ephemeral:   hs.e.Public,
 		Ciphertext:  ciphertext,
 	}, nil
 }
 
-func (hs *handshakestate) writeMessageB(payload []byte) ([32]byte, MessageHandshake, cipherstate, cipherstate, error) {
+func (hs *handshakestate) writeMessageB(payload []byte) ([32]byte, MessageHandshakeResponse, cipherstate, cipherstate, error) {
 	hs.e = GenerateKeypair()
 
 	hs.ss.mixHash(hs.e.Public[:])
@@ -586,10 +649,10 @@ func (hs *handshakestate) writeMessageB(payload []byte) ([32]byte, MessageHandsh
 	ciphertext, err := hs.ss.encryptAndHash(payload)
 	if err != nil {
 		cs1, cs2 := hs.ss.split()
-		return emptyKey, MessageHandshake{}, cs1, cs2, err
+		return emptyKey, MessageHandshakeResponse{}, cs1, cs2, err
 	}
 
-	messageBuffer := MessageHandshake{
+	messageBuffer := MessageHandshakeResponse{
 		MessageType: MessageTypeHandshakeResponse,
 		Ephemeral:   hs.e.Public,
 		Ciphertext:  ciphertext,
@@ -599,7 +662,7 @@ func (hs *handshakestate) writeMessageB(payload []byte) ([32]byte, MessageHandsh
 	return hs.ss.h, messageBuffer, cs1, cs2, err
 }
 
-func (hs *handshakestate) readMessageA(message *MessageHandshake) ([]byte, error) {
+func (hs *handshakestate) readMessageA(message MessageHandshakeInitiation) ([]byte, error) {
 	if validatePublicKey(message.Ephemeral) {
 		hs.re = message.Ephemeral
 	}
@@ -611,7 +674,7 @@ func (hs *handshakestate) readMessageA(message *MessageHandshake) ([]byte, error
 	return hs.ss.decryptAndHash(message.Ciphertext)
 }
 
-func (hs *handshakestate) readMessageB(message *MessageHandshake) ([32]byte, []byte, cipherstate, cipherstate, error) {
+func (hs *handshakestate) readMessageB(message MessageHandshakeResponse) ([32]byte, []byte, cipherstate, cipherstate, error) {
 	if validatePublicKey(message.Ephemeral) {
 		hs.re = message.Ephemeral
 	}
@@ -650,11 +713,11 @@ func InitSession(initiator bool, prologue []byte, secret Secret) NoiseSession {
 	return session
 }
 
-func (s *NoiseSession) DecryptA(message MessageHandshake) ([]byte, error) {
+func (s *NoiseSession) DecryptA(message MessageHandshakeInitiation) ([]byte, error) {
 	return s.hs.readMessageA(message)
 }
 
-func (s *NoiseSession) DecryptB(message *MessageHandshake) ([]byte, error) {
+func (s *NoiseSession) DecryptB(message MessageHandshakeResponse) ([]byte, error) {
 	var err error
 	var plaintext []byte
 
@@ -672,7 +735,7 @@ func (s *NoiseSession) Decrypt(message *MessageData) ([]byte, error) {
 	}
 }
 
-func (s *NoiseSession) EncryptA() (MessageHandshake, error) {
+func (s *NoiseSession) EncryptA() (MessageHandshakeInitiation, error) {
 	timestamp := time.Now().UnixMilli()
 	payload := make([]byte, 8)
 	binary.LittleEndian.PutUint64(payload, uint64(timestamp))
@@ -680,8 +743,8 @@ func (s *NoiseSession) EncryptA() (MessageHandshake, error) {
 	return s.hs.writeMessageA(payload)
 }
 
-func (s *NoiseSession) EncryptB() (MessageHandshake, error) {
-	var messageBuffer MessageHandshake
+func (s *NoiseSession) EncryptB() (MessageHandshakeResponse, error) {
+	var messageBuffer MessageHandshakeResponse
 	var err error
 
 	s.h, messageBuffer, s.cs1, s.cs2, err = s.hs.writeMessageB([]byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0})
