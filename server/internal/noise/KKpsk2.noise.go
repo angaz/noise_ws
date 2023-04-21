@@ -317,7 +317,7 @@ type handshakestate struct {
 	psk [32]byte
 }
 
-type NoiseSession struct {
+type Session struct {
 	hs  handshakestate
 	h   [32]byte
 	cs1 cipherstate
@@ -663,9 +663,7 @@ func (hs *handshakestate) writeMessageB(payload []byte) ([32]byte, MessageHandsh
 }
 
 func (hs *handshakestate) readMessageA(message MessageHandshakeInitiation) ([]byte, error) {
-	if validatePublicKey(message.Ephemeral) {
-		hs.re = message.Ephemeral
-	}
+	hs.re = message.Ephemeral
 	hs.ss.mixHash(hs.re[:])
 	hs.ss.mixKey(hs.re)
 	hs.ss.mixKey(dh(hs.s.Private, hs.re))
@@ -700,8 +698,8 @@ func (cs *cipherstate) writeMessageRegular(plaintext []byte) ([]byte, error) {
  * PROCESSES                                                        *
  * ---------------------------------------------------------------- */
 
-func InitSession(initiator bool, prologue []byte, secret Secret) NoiseSession {
-	var session NoiseSession
+func InitSession(initiator bool, prologue []byte, secret Secret) Session {
+	var session Session
 	/* PSK defined by user */
 	if initiator {
 		session.hs = initializeInitiator(prologue, secret.Static, secret.RemotePublic, secret.PreShared)
@@ -713,11 +711,11 @@ func InitSession(initiator bool, prologue []byte, secret Secret) NoiseSession {
 	return session
 }
 
-func (s *NoiseSession) DecryptA(message MessageHandshakeInitiation) ([]byte, error) {
+func (s *Session) DecryptA(message MessageHandshakeInitiation) ([]byte, error) {
 	return s.hs.readMessageA(message)
 }
 
-func (s *NoiseSession) DecryptB(message MessageHandshakeResponse) ([]byte, error) {
+func (s *Session) DecryptB(message MessageHandshakeResponse) ([]byte, error) {
 	var err error
 	var plaintext []byte
 
@@ -727,7 +725,7 @@ func (s *NoiseSession) DecryptB(message MessageHandshakeResponse) ([]byte, error
 	return plaintext, err
 }
 
-func (s *NoiseSession) Decrypt(message *MessageData) ([]byte, error) {
+func (s *Session) Decrypt(message *MessageData) ([]byte, error) {
 	if s.i {
 		return s.cs2.readMessageRegular(message.Ciphertext)
 	} else {
@@ -735,7 +733,7 @@ func (s *NoiseSession) Decrypt(message *MessageData) ([]byte, error) {
 	}
 }
 
-func (s *NoiseSession) EncryptA() (MessageHandshakeInitiation, error) {
+func (s *Session) EncryptA() (MessageHandshakeInitiation, error) {
 	timestamp := time.Now().UnixMilli()
 	payload := make([]byte, 8)
 	binary.LittleEndian.PutUint64(payload, uint64(timestamp))
@@ -743,7 +741,7 @@ func (s *NoiseSession) EncryptA() (MessageHandshakeInitiation, error) {
 	return s.hs.writeMessageA(payload)
 }
 
-func (s *NoiseSession) EncryptB() (MessageHandshakeResponse, error) {
+func (s *Session) EncryptB() (MessageHandshakeResponse, error) {
 	var messageBuffer MessageHandshakeResponse
 	var err error
 
@@ -753,7 +751,7 @@ func (s *NoiseSession) EncryptB() (MessageHandshakeResponse, error) {
 	return messageBuffer, err
 }
 
-func (s *NoiseSession) Encrypt(plaintext []byte) ([]byte, error) {
+func (s *Session) Encrypt(plaintext []byte) ([]byte, error) {
 	if s.i {
 		return s.cs1.writeMessageRegular(plaintext)
 	} else {

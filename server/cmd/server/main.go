@@ -18,8 +18,8 @@ import (
 	"github.com/SN9NV/noise_ws/server/internal/noise"
 )
 
-type serverNoiseSession struct {
-	session          noise.NoiseSession
+type Peer struct {
+	session          noise.Session
 	lastMessage      time.Time
 	sessionStartTime time.Time
 	localIndex       uint32
@@ -28,23 +28,25 @@ type serverNoiseSession struct {
 
 type server struct {
 	secret    noise.Secret
-	indexMap  map[uint32]*serverNoiseSession
-	keyMap    map[[32]byte]*serverNoiseSession
+	indexMap  map[uint32]*Peer
+	keyMap    map[[32]byte]*Peer
 	indexLock sync.Mutex
 }
 
-func (s *server) generateRandomIndex(session *serverNoiseSession) uint32 {
+func (s *server) assignRandomIndex(peer *Peer) uint32 {
 	s.indexLock.Lock()
 	defer s.indexLock.Unlock()
 
 	for {
 		i := rand.Uint32()
-		_, found := s.indexMap[i]
 
-		if !found {
-			s.indexMap[i] = session
-			return i
+		_, found := s.indexMap[i]
+		if found {
+			continue
 		}
+
+		s.indexMap[i] = peer
+		return i
 	}
 }
 
@@ -81,7 +83,7 @@ func (s *server) handleHandshakeInit(w http.ResponseWriter, r *http.Request, cip
 		return
 	}
 
-	unixMilli := binary.LittleEndian.Uint64(plaintext)
+	unixMilli := binary.LittleEndian.Uint64(plaintext[0:8])
 	timestamp := time.UnixMilli(int64(unixMilli))
 
 	if time.Since(timestamp) > 2*time.Second {
@@ -99,19 +101,18 @@ func (s *server) handleHandshakeInit(w http.ResponseWriter, r *http.Request, cip
 
 	messageB.ReceiverIndex = messageA.SenderIndex
 
-	serverSession := serverNoiseSession{
+	peer := &Peer{
 		session:          session,
 		lastMessage:      timestamp,
 		sessionStartTime: timestamp,
 		remoteIndex:      messageA.SenderIndex,
 	}
 
-	localIndex := s.generateRandomIndex(&serverSession)
-
-	s.keyMap[messageA.Ephemeral] = &serverSession
-
-	serverSession.localIndex = localIndex
+	localIndex := s.assignRandomIndex(peer)
+	peer.localIndex = localIndex
 	messageB.SenderIndex = localIndex
+
+	s.keyMap[messageA.Ephemeral] = peer
 
 	w.WriteHeader(http.StatusOK)
 	_, err = w.Write(messageB.Encode())
@@ -157,7 +158,7 @@ func main() {
 
 	server := server{
 		secret:   secret,
-		sessions: map[string]serverNoiseSession{},
+		sessions: map[string]Peer{},
 	}
 
 	mux := http.NewServeMux()
