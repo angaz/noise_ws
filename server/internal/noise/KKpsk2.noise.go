@@ -170,15 +170,23 @@ func DecodeSecret(s []byte) (Secret, error) {
 	}
 }
 
-type MessageType byte
+type MessageType uint32
 
 const (
-	MessageTypeInvalid             MessageType = 0
-	MessageTypeHandshakeInitiation MessageType = 1
-	MessageTypeHandshakeResponse   MessageType = 2
-	MessageTypeData                MessageType = 3
-	MessageTypeClose               MessageType = 4
+	MessageTypeInvalid     MessageType = 0
+	MessageTypeInitiation  MessageType = 1
+	MessageTypeResponse    MessageType = 2
+	MessageTypeCookieReply MessageType = 3
+	MessageTypeTransport   MessageType = 4
 )
+
+func (t MessageType) Encode(b []byte) {
+	binary.LittleEndian.PutUint32(b, uint32(t))
+}
+
+func (t *MessageType) Decode(b []byte) {
+	*t = MessageType(binary.LittleEndian.Uint32(b))
+}
 
 type MessageHandshakeInitiation struct {
 	MessageType MessageType
@@ -631,7 +639,7 @@ func (hs *handshakestate) writeMessageA(payload []byte) (MessageHandshakeInitiat
 	}
 
 	return MessageHandshakeInitiation{
-		MessageType: MessageTypeHandshakeInitiation,
+		MessageType: MessageTypeInitiation,
 		Ephemeral:   hs.e.Public,
 		Ciphertext:  ciphertext,
 	}, nil
@@ -653,7 +661,7 @@ func (hs *handshakestate) writeMessageB(payload []byte) ([32]byte, MessageHandsh
 	}
 
 	messageBuffer := MessageHandshakeResponse{
-		MessageType: MessageTypeHandshakeResponse,
+		MessageType: MessageTypeResponse,
 		Ephemeral:   hs.e.Public,
 		Ciphertext:  ciphertext,
 	}

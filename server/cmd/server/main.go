@@ -137,11 +137,11 @@ func (s *server) hander(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch noise.MessageType(ciphertext[0]) {
-	case noise.MessageTypeHandshakeInitiation:
+	case noise.MessageTypeInitiation:
 		s.handleHandshakeInit(w, r, ciphertext)
-	case noise.MessageTypeHandshakeResponse:
+	case noise.MessageTypeResponse:
 		s.handleHandshakeResponse(w, r, ciphertext)
-	case noise.MessageTypeData:
+	case noise.MessageTypeTransport:
 		s.handleMessageData(w, r, ciphertext)
 	case noise.MessageTypeClose:
 		s.handleMessageClose(w, r, ciphertext)
